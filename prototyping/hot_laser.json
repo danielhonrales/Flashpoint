@@ -1,0 +1,159 @@
+{
+  "erm_activations": [
+    {
+      "erms": [
+        3
+      ],
+      "start": 0.0,
+      "duration": 0.2
+    },
+    {
+      "erms": [
+        11
+      ],
+      "start": 0.0,
+      "duration": 0.3
+    },
+    {
+      "erms": [
+        10
+      ],
+      "start": 0.1433,
+      "duration": 0.3
+    },
+    {
+      "erms": [
+        9
+      ],
+      "start": 0.2866,
+      "duration": 0.3
+    },
+    {
+      "erms": [
+        8
+      ],
+      "start": 0.4299,
+      "duration": 0.3
+    },
+    {
+      "erms": [
+        7
+      ],
+      "start": 0.7,
+      "duration": 0.3
+    },
+    {
+      "erms": [
+        6
+      ],
+      "start": 0.8433,
+      "duration": 0.3
+    },
+    {
+      "erms": [
+        5
+      ],
+      "start": 0.9866,
+      "duration": 0.3
+    },
+    {
+      "erms": [
+        4
+      ],
+      "start": 1.1299,
+      "duration": 0.3
+    },
+    {
+      "erms": [
+        11
+      ],
+      "start": 1.4,
+      "duration": 0.3
+    },
+    {
+      "erms": [
+        10
+      ],
+      "start": 1.5433,
+      "duration": 0.3
+    },
+    {
+      "erms": [
+        9
+      ],
+      "start": 1.6866,
+      "duration": 0.3
+    },
+    {
+      "erms": [
+        8
+      ],
+      "start": 1.8299,
+      "duration": 0.3
+    },
+    {
+      "erms": [
+        7
+      ],
+      "start": 2.1,
+      "duration": 0.3
+    },
+    {
+      "erms": [
+        6
+      ],
+      "start": 2.2433,
+      "duration": 0.3
+    },
+    {
+      "erms": [
+        5
+      ],
+      "start": 2.3866,
+      "duration": 0.3
+    },
+    {
+      "erms": [
+        4
+      ],
+      "start": 2.5299,
+      "duration": 0.3
+    },
+    {
+      "erms": [
+        1
+      ],
+      "start": 0.7,
+      "duration": 0.1
+    },
+    {
+      "erms": [
+        3
+      ],
+      "start": 1.4,
+      "duration": 0.1
+    },
+    {
+      "erms": [
+        1
+      ],
+      "start": 2.1,
+      "duration": 0.1
+    }
+  ],
+  "psu_activations": [
+    {
+      "psu": 0,
+      "start": 0.0,
+      "duration": 2.7,
+      "voltage": 3.5
+    },
+    {
+      "psu": 1,
+      "start": 0.0,
+      "duration": 2.7,
+      "voltage": 3.5
+    }
+  ],
+  "psu_warmup": 0.5
+}

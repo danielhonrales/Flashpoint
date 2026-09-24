@@ -1,0 +1,179 @@
+{
+  "erm_activations": [
+    {
+      "erms": [
+        0,
+        2
+      ],
+      "start": 0.0,
+      "duration": 0.1
+    },
+    {
+      "erms": [
+        7
+      ],
+      "start": 2.1,
+      "duration": 0.25
+    },
+    {
+      "erms": [
+        6
+      ],
+      "start": 2.2273,
+      "duration": 0.25
+    },
+    {
+      "erms": [
+        5
+      ],
+      "start": 2.3546,
+      "duration": 0.25
+    },
+    {
+      "erms": [
+        4
+      ],
+      "start": 2.4819,
+      "duration": 0.25
+    },
+    {
+      "erms": [
+        11
+      ],
+      "start": 2.1,
+      "duration": 0.25
+    },
+    {
+      "erms": [
+        10
+      ],
+      "start": 2.2273,
+      "duration": 0.25
+    },
+    {
+      "erms": [
+        9
+      ],
+      "start": 2.3546,
+      "duration": 0.25
+    },
+    {
+      "erms": [
+        8
+      ],
+      "start": 2.4819,
+      "duration": 0.25
+    },
+    {
+      "erms": [
+        0
+      ],
+      "start": 2.7,
+      "duration": 0.3
+    },
+    {
+      "erms": [
+        2
+      ],
+      "start": 2.7,
+      "duration": 0.3
+    },
+    {
+      "erms": [
+        4
+      ],
+      "start": 0.1,
+      "duration": 0.9
+    },
+    {
+      "erms": [
+        5
+      ],
+      "start": 0.4353,
+      "duration": 0.9
+    },
+    {
+      "erms": [
+        6
+      ],
+      "start": 0.7706,
+      "duration": 0.9
+    },
+    {
+      "erms": [
+        7
+      ],
+      "start": 1.1059,
+      "duration": 0.9
+    },
+    {
+      "erms": [
+        8
+      ],
+      "start": 0.1,
+      "duration": 0.9
+    },
+    {
+      "erms": [
+        9
+      ],
+      "start": 0.4353,
+      "duration": 0.9
+    },
+    {
+      "erms": [
+        10
+      ],
+      "start": 0.7706,
+      "duration": 0.9
+    },
+    {
+      "erms": [
+        11
+      ],
+      "start": 1.1059,
+      "duration": 0.9
+    },
+    {
+      "erms": [
+        7
+      ],
+      "start": 1.1059,
+      "duration": 1.0
+    },
+    {
+      "erms": [
+        11
+      ],
+      "start": 1.1059,
+      "duration": 1.0
+    }
+  ],
+  "psu_activations": [
+    {
+      "psu": 1,
+      "start": 0.0,
+      "duration": 1.0,
+      "voltage": 3.5
+    },
+    {
+      "psu": 0,
+      "start": 0.0,
+      "duration": 1.0,
+      "voltage": 3.5
+    },
+    {
+      "psu": 0,
+      "start": 0.0,
+      "duration": 3.5,
+      "voltage": 3.5
+    },
+    {
+      "psu": 1,
+      "start": 0.0,
+      "duration": 3.5,
+      "voltage": 3.5
+    }
+  ],
+  "psu_warmup": 0.0
+}

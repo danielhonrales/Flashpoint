@@ -6,6 +6,8 @@ A stimulus is a set of activation periods, all timed in seconds from the start o
 
   ERM periods - which ERMs turn on, when, and for how long. One period can drive several ERMs,
                 and periods may overlap: an ERM stays on while any period containing it is active.
+                By default the editor adds ERMs as a Tactile Brush stroke: one period per ERM,
+                in the order they were ticked, with onsets spaced for apparent motion.
   PSU periods - which voltage a supply goes to, when, and for how long. Each supply has its own
                 periods, running concurrently with the ERMs and the other supply. If periods on the
                 same supply overlap, the one that started most recently wins; when it ends the
@@ -13,8 +15,8 @@ A stimulus is a set of activation periods, all timed in seconds from the start o
 
 Stimuli are saved as JSON.   Usage: python3 stimulus_editor.py [stimulus.json]
 
-Needs Tkinter, gpiozero and pyserial on the Pi:
-    sudo apt install python3-tk python3-gpiozero python3-serial
+Needs Tkinter, RPi.GPIO and pyserial on the Pi:
+    sudo apt install python3-tk python3-rpi.gpio python3-serial
 Any ERM or PSU that can't be opened (library missing, port not found, DRY_RUN set) is simulated
 instead, and the editor shows a red SIMULATED banner naming it.
 """
@@ -39,18 +41,17 @@ from tkinter import filedialog, messagebox, ttk
 # ----------------------------------------------------------------------------
 
 # BCM GPIO number for each ERM.
-ERM_PINS = [17, 27, 22, 23]
+ERM_PINS = [2,3,17,27,10,9,11,5,6,13,19,26]
 
 # Serial ports of the two supplies. /dev/ttyUSB* numbers can swap between boots; the
 # /dev/serial/by-path/... links are tied to the physical USB socket and stay put.
-PSU1_PORT = "/dev/ttyUSB0"
-PSU2_PORT = "/dev/ttyUSB1"
+PSU1_PORT = "/dev/ttyACM0"
+PSU2_PORT = "/dev/ttyACM1"
 PSU_BAUDRATE = 9600
 PSU_LINE_ENDING = ""        # appended to each VSET command; some supplies want "\n"
 PSU_MAX_VOLTAGE = 30.0      # default per-supply limit; voltages above it are rejected
 
 DRY_RUN = False             # True: simulate every device, even on the Pi
-
 
 # ----------------------------------------------------------------------------
 # Hardware
@@ -71,6 +72,29 @@ class _NullDevice:
     def close(self): pass
 
 
+class _GpioPin:
+    """An RPi.GPIO output pin, driven low from the moment it is set up."""
+
+    def __init__(self, pin: int):
+        import RPi.GPIO as GPIO
+        self._gpio = GPIO
+        self.pin = pin
+        GPIO.setwarnings(False)     # pins left as outputs by a previous run are expected
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(pin, GPIO.OUT, initial=GPIO.LOW)
+
+    def on(self):
+        self._gpio.output(self.pin, self._gpio.HIGH)
+
+    def off(self):
+        self._gpio.output(self.pin, self._gpio.LOW)
+
+    def close(self):
+        # Deliberately no GPIO.cleanup(): that turns the pin back into a floating input,
+        # which switches the ERM on. Left as an output, it stays low after we exit.
+        pass
+
+
 class ERM:
     """An ERM switched by one GPIO pin: high = on, low = off.
 
@@ -86,8 +110,7 @@ class ERM:
         self._pin = _NullDevice()
         if not DRY_RUN:
             try:
-                from gpiozero import DigitalOutputDevice
-                self._pin = DigitalOutputDevice(pin, initial_value=False)
+                self._pin = _GpioPin(pin)
             except Exception as e:
                 self.sim_reason = f"{type(e).__name__}: {e}"
 
@@ -190,6 +213,11 @@ class PsuActivation:
 class Stimulus:
     erm_activations: list[ErmActivation] = field(default_factory=list)
     psu_activations: list[PsuActivation] = field(default_factory=list)
+    psu_warmup: float = 0.0     # seconds: PSU periods starting at 0 begin this long before it
+
+    def __post_init__(self):
+        if not self.psu_warmup >= 0:
+            raise ValueError(f"PSU warm-up must be >= 0, got {self.psu_warmup}")
 
     @property
     def duration(self):
@@ -204,7 +232,26 @@ class Stimulus:
         with open(path) as f:
             data = json.load(f)
         return cls(erm_activations=[ErmActivation(**p) for p in data.get("erm_activations", [])],
-                   psu_activations=[PsuActivation(**p) for p in data.get("psu_activations", [])])
+                   psu_activations=[PsuActivation(**p) for p in data.get("psu_activations", [])],
+                   psu_warmup=data.get("psu_warmup", 0.0))
+
+
+# Tactile Brush (Israr & Poupyrev, CHI 2011): vibrating actuators one after another in bursts
+# of duration d, with onsets SOA apart, feels like one continuous stroke rather than separate
+# taps when SOA = 0.32 * d + 47.3 ms.
+TB_SOA_SLOPE = 0.32
+TB_SOA_INTERCEPT = 0.0473   # seconds
+
+
+def tactile_brush_soa(duration: float) -> float:
+    """Stimulus onset asynchrony (seconds) for apparent motion with bursts of `duration` seconds."""
+    return TB_SOA_SLOPE * duration + TB_SOA_INTERCEPT
+
+
+def tactile_brush_stroke(erms: list[int], start: float, duration: float) -> list[ErmActivation]:
+    """One period per ERM, in the given order, each `duration` long and one SOA after the last."""
+    soa = tactile_brush_soa(duration)
+    return [ErmActivation([erm], start + k * soa, duration) for k, erm in enumerate(erms)]
 
 
 def _erm_changes(periods: list[ErmActivation], n_erms: int):
@@ -227,15 +274,17 @@ def _erm_changes(periods: list[ErmActivation], n_erms: int):
     return changes
 
 
-def _psu_changes(periods: list[PsuActivation], idle_voltage: float):
+def _psu_changes(periods: list[PsuActivation], idle_voltage: float, warmup: float = 0.0):
     """Resolve one supply's (possibly overlapping) periods into [(time, voltage), ...].
-    The most recently started active period wins; with none active the supply idles."""
-    periods = sorted(periods, key=lambda p: p.start)   # stable: equal starts keep definition order
+    The most recently started active period wins; with none active the supply idles.
+    Periods starting at 0 begin `warmup` seconds early, so times can be negative."""
+    spans = sorted(((-warmup if p.start == 0 else p.start, p.end, p.voltage) for p in periods),
+                   key=lambda span: span[0])   # stable: equal starts keep definition order
     changes = []
     voltage = idle_voltage
-    for t in sorted({p.start for p in periods} | {p.end for p in periods}):
-        active = [p for p in periods if p.start <= t < p.end]
-        target = active[-1].voltage if active else idle_voltage
+    for t in sorted({start for start, _, _ in spans} | {end for _, end, _ in spans}):
+        active = [v for start, end, v in spans if start <= t < end]
+        target = active[-1] if active else idle_voltage
         if target != voltage:
             changes.append((t, target))
             voltage = target
@@ -286,7 +335,8 @@ class StimulusController:
         print_lock = threading.Lock()
 
         self.reset()
-        t0 = self.t0 = time.perf_counter() + 0.2   # give the supplies a moment after reset()
+        # Give the supplies a moment after reset(), then the PSU warm-up runs before time 0.
+        t0 = self.t0 = time.perf_counter() + 0.2 + stimulus.psu_warmup
 
         def play(track):
             try:
@@ -331,7 +381,8 @@ class StimulusController:
         for i, psu in enumerate(self.psus):
             periods = [p for p in stimulus.psu_activations if p.psu == i]
             tracks.append([(t, f"{psu.name} -> {v:.2f} V", functools.partial(psu.set_voltage, v))
-                           for t, v in _psu_changes(periods, psu.idle_voltage)])
+                           for t, v in _psu_changes(periods, psu.idle_voltage,
+                                                    stimulus.psu_warmup)])
         return [track for track in tracks if track]
 
     def close(self):
@@ -399,6 +450,7 @@ class Timeline(tk.Canvas):
         self._playhead = None
         self._playhead_span = (0, 0)
         self._to_x = None
+        self._t_min = 0.0
         self.bind("<Configure>", lambda event: self.redraw())
         self.bind("<Button-1>", self._on_click)
 
@@ -412,9 +464,13 @@ class Timeline(tk.Canvas):
         if width < self.LABEL_W + 100:
             return      # not laid out yet
         controller, stimulus = self.editor.controller, self.editor.stimulus
-        span = max(stimulus.duration, 1.0) * 1.05
+        warmup = stimulus.psu_warmup
+        t_min = -warmup                     # the axis starts with the PSU warm-up
+        span = warmup + max(stimulus.duration, 1.0) * 1.05
+        t_end = t_min + span
         left, right = self.LABEL_W, width - self.RIGHT_PAD
-        x = self._to_x = lambda t: left + (right - left) * t / span
+        x = self._to_x = lambda t: left + (right - left) * (t - t_min) / span
+        self._t_min = t_min
         n_lanes = len(controller.erms) + 1.8 * len(controller.psus)
         unit = min(max((height - 2 * self.PAD - self.AXIS_H) / n_lanes, 18), 60)
         lanes = [(self._draw_erm_lane, i, unit) for i in range(len(controller.erms))]
@@ -422,25 +478,32 @@ class Timeline(tk.Canvas):
         top = self.PAD
         bottom = top + sum(h for _, _, h in lanes)
 
+        if warmup:
+            self.create_rectangle(x(t_min), top, x(0), bottom, fill="#f2f2f2", outline="")
+            self.create_line(x(0), top, x(0), bottom + 4, fill="#888", dash=(4, 3))
         step = _tick_step(span, max(2, (right - left) // 80))
-        for n in range(int(span / step) + 1):
+        for n in range(math.ceil(t_min / step - 1e-9), int(t_end / step) + 1):
             tick_x = x(n * step)
             self.create_line(tick_x, top, tick_x, bottom + 4, fill="#e4e4e4")
-            self.create_text(tick_x, bottom + 6, anchor="n", text=f"{_fmt(n * step)} s", fill="#555")
+            self.create_text(tick_x, bottom + 6, anchor="n", text=f"{_fmt(round(n * step, 6))} s",
+                             fill="#555")
         self.create_line(left, bottom, right, bottom, fill="#888")
 
         y = top
         for draw, index, h in lanes:
-            draw(index, y, h, x, span)
+            draw(index, y, h, x, t_end)
             y += h
             self.create_line(0, y, right, y, fill="#d4d4d4")
+        if warmup:
+            self.create_text((x(t_min) + x(0)) / 2, top + 2, anchor="n", fill="#777",
+                             text="PSU warm-up", tags=("overlay",))
         self.tag_raise("selected")
         self.tag_raise("overlay")
         self._playhead = self.create_line(0, top, 0, bottom, fill="#d62728", width=2, state="hidden")
         self._playhead_span = (top, bottom)
         self.update_live()
 
-    def _draw_erm_lane(self, i, y, h, x, span):
+    def _draw_erm_lane(self, i, y, h, x, t_end):
         erm = self.editor.controller.erms[i]
         mid = y + h / 2
         self._lamps.append(self.create_oval(8, mid - 6, 20, mid + 6, outline="#777", fill=LAMP_OFF))
@@ -450,7 +513,7 @@ class Timeline(tk.Canvas):
                 self._bar(period, x(period.start), y + 4, x(period.end), y + h - 4,
                           ERM_COLORS[erm.erm_type])
 
-    def _draw_psu_lane(self, k, y, h, x, span):
+    def _draw_psu_lane(self, k, y, h, x, t_end):
         psu = self.editor.controller.psus[k]
         self._lane_label(y + h / 2, psu.name, psu)
         self._readouts.append(self.create_text(self.LABEL_W - 10, y + h / 2, anchor="e",
@@ -460,19 +523,23 @@ class Timeline(tk.Canvas):
         v_max = max([p.voltage for p in periods] + [psu.idle_voltage]) or 1.0
         base, ceiling = y + h - 4, y + 18    # room above the bars for their voltage labels
         vy = lambda v: base - (base - ceiling) * v / v_max
+        warmup = self.editor.stimulus.psu_warmup
         for period in periods:
             x0, x1 = x(period.start), x(period.end)
             self._bar(period, x0, vy(period.voltage), x1, base, PSU_COLOR)
+            if warmup and period.start == 0:
+                self._bar(period, x(-warmup), vy(period.voltage), x0, base, PSU_COLOR,
+                          stipple="gray50")
             if x1 - x0 > 34:
                 self.create_text(x0 + 3, vy(period.voltage) - 1, anchor="sw", fill="#333",
                                  text=f"{_fmt(period.voltage)} V", tags=("overlay",))
         # What the supply will actually output, after resolving overlaps.
-        points = [x(0), vy(psu.idle_voltage)]
+        points = [x(-warmup), vy(psu.idle_voltage)]
         voltage = psu.idle_voltage
-        for t, next_voltage in _psu_changes(periods, psu.idle_voltage):
+        for t, next_voltage in _psu_changes(periods, psu.idle_voltage, warmup):
             points += [x(t), vy(voltage), x(t), vy(next_voltage)]
             voltage = next_voltage
-        points += [x(span), vy(voltage)]
+        points += [x(t_end), vy(voltage)]
         self.create_line(*points, fill=PSU_LINE_COLOR, width=2, tags=("overlay",))
 
     def _lane_label(self, mid, text, device):
@@ -480,9 +547,9 @@ class Timeline(tk.Canvas):
         self.create_text(28, mid, anchor="w", text=text + ("   sim" if simulated else ""),
                          fill=SIM_COLOR if simulated else "#222")
 
-    def _bar(self, period, x0, y0, x1, y1, color):
+    def _bar(self, period, x0, y0, x1, y1, color, stipple=""):
         selected = period is self.editor.selected
-        item = self.create_rectangle(x0, y0, max(x1, x0 + 2), y1,
+        item = self.create_rectangle(x0, y0, max(x1, x0 + 2), y1, stipple=stipple,
                                      fill=SELECTED_COLOR if selected else color,
                                      outline="#000" if selected else "#555",
                                      width=2 if selected else 1,
@@ -507,7 +574,7 @@ class Timeline(tk.Canvas):
         if elapsed is None:
             self.itemconfigure(self._playhead, state="hidden")
         else:
-            playhead_x = self._to_x(max(0.0, elapsed))
+            playhead_x = self._to_x(max(self._t_min, elapsed))
             top, bottom = self._playhead_span
             self.coords(self._playhead, playhead_x, top, playhead_x, bottom)
             self.itemconfigure(self._playhead, state="normal")
@@ -533,7 +600,6 @@ class _PeriodPanel(ttk.Frame):
         self.tree.grid(row=0, column=0, sticky="nsew")
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
-        self.tree.bind("<Delete>", lambda event: self._delete())
 
         form = ttk.Frame(self, padding=(14, 0, 0, 0))
         form.grid(row=0, column=2, sticky="n")
@@ -551,6 +617,8 @@ class _PeriodPanel(ttk.Frame):
         self.update_button.pack(side=tk.LEFT, padx=4)
         self.delete_button = ttk.Button(buttons, text="Delete", command=self._delete)
         self.delete_button.pack(side=tk.LEFT)
+        self._bind_return(form)
+        self._bind_return(self.tree)
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
@@ -561,7 +629,7 @@ class _PeriodPanel(ttk.Frame):
     def _row(self, period): raise NotImplementedError
     def _build_fields(self, form, first_row): raise NotImplementedError
     def _fill_fields(self, period): raise NotImplementedError
-    def _make_period(self, start, duration): raise NotImplementedError
+    def _make_periods(self, start, duration): raise NotImplementedError   # -> list of periods
 
     def refresh(self):
         self.tree.delete(*self.tree.get_children())
@@ -592,6 +660,20 @@ class _PeriodPanel(ttk.Frame):
             self.editor.select(period)
         self._update_buttons()
 
+    def _bind_return(self, widget):
+        """Enter updates the selected period (or adds one if none is selected); Shift+Enter adds."""
+        widget.bind("<Return>", self._on_return)
+        widget.bind("<KP_Enter>", self._on_return)
+        for child in widget.winfo_children():
+            self._bind_return(child)
+
+    def _on_return(self, event):
+        if event.state & 0x1 or self.selected_period() is None:     # 0x1: Shift held
+            self._add()
+        else:
+            self._update()
+        return "break"
+
     def _update_buttons(self):
         state = ["!disabled"] if self.selected_period() else ["disabled"]
         self.update_button.state(state)
@@ -601,15 +683,15 @@ class _PeriodPanel(ttk.Frame):
         try:
             start = _parse_float(self.start_var, "Start")
             duration = _parse_float(self.duration_var, "Duration")
-            return self._make_period(start, duration)
+            return self._make_periods(start, duration)
         except ValueError as e:
             messagebox.showerror("Invalid period", str(e), parent=self)
             return None
 
     def _add(self):
-        period = self._read_form()
-        if period is not None:
-            self.editor.add_period(period)
+        periods = self._read_form()
+        if periods is not None:
+            self.editor.add_periods(periods)
 
     def _update(self):
         old = self.selected_period()
@@ -634,24 +716,70 @@ class ErmPanel(_PeriodPanel):
                 _fmt(period.start), _fmt(period.duration), _fmt(period.end))
 
     def _build_fields(self, form, first_row):
+        self.duration_var.set("0.1")    # Tactile Brush strokes are built from short bursts
+        self.brush_var = tk.BooleanVar(value=True)
+        timing = ttk.Frame(form)
+        timing.grid(row=first_row, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Label(timing, text="Timing").pack(side=tk.LEFT, padx=(0, 6))
+        for text, value in [("Tactile Brush", True), ("Simultaneous", False)]:
+            ttk.Radiobutton(timing, text=text, variable=self.brush_var, value=value,
+                            command=self._update_info).pack(side=tk.LEFT, padx=(0, 6))
+
         box = ttk.LabelFrame(form, text="ERMs", padding=(6, 2))
-        box.grid(row=first_row, column=0, columnspan=2, sticky="we", pady=(6, 0))
+        box.grid(row=first_row + 1, column=0, columnspan=2, sticky="we", pady=(6, 0))
         self.erm_vars = []
+        self.order = []     # ticked ERMs in the order they were ticked: a stroke's direction
         for i, erm in enumerate(self.editor.controller.erms):
             var = tk.BooleanVar()
-            ttk.Checkbutton(box, text=f"{i}: {erm}", variable=var).grid(
+            ttk.Checkbutton(box, text=f"{i}: {erm}", variable=var,
+                            command=functools.partial(self._on_tick, i)).grid(
                 row=i % 4, column=i // 4, sticky="w", padx=(0, 10))
             self.erm_vars.append(var)
+
+        self.info = ttk.Label(form, foreground="#666", justify=tk.LEFT, wraplength=420)
+        self.info.grid(row=first_row + 2, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        self.duration_var.trace_add("write", lambda *args: self._update_info())
+        self._update_info()
+
+    def _on_tick(self, i):
+        if self.erm_vars[i].get():
+            self.order.append(i)
+        else:
+            self.order.remove(i)
+        self._update_info()
+
+    def _update_info(self):
+        if not self.brush_var.get():
+            text = "All ticked ERMs run together as one period."
+        elif not self.order:
+            text = "Tick ERMs in the order the stroke should cross them."
+        else:
+            text = "Order " + " → ".join(map(str, self.order))
+            try:
+                duration = _parse_float(self.duration_var, "Duration")
+            except ValueError:
+                duration = None
+            if duration is not None and duration > 0:
+                soa = tactile_brush_soa(duration)
+                total = (len(self.order) - 1) * soa + duration
+                text += (f"\nEach ERM on {_fmt(round(duration * 1000, 1))} ms, "
+                         f"SOA {_fmt(round(soa * 1000, 1))} ms, stroke {_fmt(round(total, 4))} s")
+        self.info.configure(text=text)
 
     def _fill_fields(self, period):
         for i, var in enumerate(self.erm_vars):
             var.set(i in period.erms)
+        self.order = list(dict.fromkeys(period.erms))
+        if len(self.order) > 1:
+            self.brush_var.set(False)   # so Update keeps a multi-ERM period as it is
+        self._update_info()
 
-    def _make_period(self, start, duration):
-        erms = [i for i, var in enumerate(self.erm_vars) if var.get()]
-        if not erms:
+    def _make_periods(self, start, duration):
+        if not self.order:
             raise ValueError("Tick at least one ERM.")
-        return ErmActivation(erms, start, duration)
+        if self.brush_var.get():
+            return tactile_brush_stroke(self.order, start, duration)
+        return [ErmActivation(list(self.order), start, duration)]
 
 
 class PsuPanel(_PeriodPanel):
@@ -681,10 +809,10 @@ class PsuPanel(_PeriodPanel):
     def _fill_fields(self, period):
         self.voltage_var.set(_fmt(period.voltage))
 
-    def _make_period(self, start, duration):
+    def _make_periods(self, start, duration):
         voltage = _parse_float(self.voltage_var, "Voltage")
         self.psu.check_voltage(voltage)
-        return PsuActivation(self.index, start, duration, voltage)
+        return [PsuActivation(self.index, start, duration, voltage)]
 
 
 class ManualPanel(ttk.Frame):
@@ -810,9 +938,11 @@ class StimulusEditor(tk.Tk):
         self.bind("<Control-s>", lambda event: self.save())
         self.bind("<F5>", lambda event: self.run())
         self.bind("<Escape>", lambda event: self.stop())
+        self.bind("<Delete>", self._on_delete_key)
+        self.bind("<BackSpace>", self._on_delete_key)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        self._set_status("Ready.  F5 runs the stimulus, Esc stops it.")
+        self._set_status("Ready.  F5 runs the stimulus, Esc stops it.  Enter updates/adds a period, Shift+Enter adds, Delete removes.")
         self._refresh()
         if path:
             self.open_stimulus(path)
@@ -830,6 +960,13 @@ class StimulusEditor(tk.Tk):
         self.run_button.pack(side=tk.LEFT, padx=(0, 4))
         self.stop_button = ttk.Button(bar, text="■ Stop (Esc)", command=self.stop, state="disabled")
         self.stop_button.pack(side=tk.LEFT)
+        ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
+        ttk.Label(bar, text="PSU warm-up (s)").pack(side=tk.LEFT, padx=(0, 4))
+        self.warmup_var = tk.StringVar(value=_fmt(self.stimulus.psu_warmup))
+        warmup = ttk.Entry(bar, textvariable=self.warmup_var, width=6)
+        warmup.pack(side=tk.LEFT)
+        warmup.bind("<Return>", lambda event: self._apply_warmup())
+        warmup.bind("<FocusOut>", lambda event: self._apply_warmup())
 
         devices = ([(f"ERM {i}", erm) for i, erm in enumerate(self.controller.erms)]
                    + [(psu.name, psu) for psu in self.controller.psus])
@@ -868,19 +1005,29 @@ class StimulusEditor(tk.Tk):
             self.tabs.select(self._panel_for(period))
         self.timeline.redraw()
 
-    def add_period(self, period):
-        self._list_for(period).append(period)
-        self._changed(select=period)
+    def add_periods(self, new):
+        self._list_for(new[0]).extend(new)
+        # Selecting one period of a stroke would refill the form with just that ERM,
+        # losing the stroke's ERMs and order; leave the form as it is instead.
+        self._changed(select=new[0] if len(new) == 1 else None)
 
     def replace_period(self, old, new):
+        """Put the periods in `new` where `old` was."""
         periods = self._list_for(old)
-        periods[_index_of(periods, old)] = new
-        self._changed(select=new)
+        i = _index_of(periods, old)
+        periods[i:i + 1] = new
+        self._changed(select=new[0] if len(new) == 1 else None)   # see add_periods
 
     def remove_period(self, period):
         periods = self._list_for(period)
         del periods[_index_of(periods, period)]
         self._changed(select=None)
+
+    def _on_delete_key(self, event):
+        # In a text box these keys edit the text instead.
+        if isinstance(event.widget, (tk.Entry, ttk.Entry)) or self.selected is None:
+            return
+        self.remove_period(self.selected)
 
     def _changed(self, select):
         self.dirty = True
@@ -896,7 +1043,24 @@ class StimulusEditor(tk.Tk):
 
     # --- files ---------------------------------------------------------------
 
+    def _apply_warmup(self):
+        """Take the warm-up from the toolbar: PSU periods starting at 0 begin this long before it."""
+        try:
+            warmup = _parse_float(self.warmup_var, "PSU warm-up")
+            if warmup < 0:
+                raise ValueError("PSU warm-up can't be negative.")
+        except ValueError as e:
+            self.warmup_var.set(_fmt(self.stimulus.psu_warmup))
+            messagebox.showerror("Invalid warm-up", str(e), parent=self)
+            return
+        if warmup != self.stimulus.psu_warmup:
+            self.stimulus.psu_warmup = warmup
+            self.dirty = True
+            self._refresh()
+        self.warmup_var.set(_fmt(warmup))
+
     def _set_stimulus(self, stimulus, path):
+        self.warmup_var.set(_fmt(stimulus.psu_warmup))
         self.stimulus = stimulus
         self.path = path
         self.dirty = False
@@ -1014,7 +1178,10 @@ class StimulusEditor(tk.Tk):
             self._run_finished()
         elapsed = self.controller.elapsed()
         if elapsed is not None:
-            self._set_status(f"Running   {max(0.0, elapsed):.2f} / {self._run_duration:.2f} s")
+            if elapsed < 0:
+                self._set_status(f"PSU warm-up   {-elapsed:.2f} s to go")
+            else:
+                self._set_status(f"Running   {elapsed:.2f} / {self._run_duration:.2f} s")
         self.timeline.update_live()
         self.manual.update_live()
         self.after(self.POLL_MS, self._poll)
@@ -1042,12 +1209,11 @@ class StimulusEditor(tk.Tk):
 # ----------------------------------------------------------------------------
 
 def main():
-    erms = [
-        ERM(ERM_PINS[0], ErmType.SMALL),
-        ERM(ERM_PINS[1], ErmType.SMALL),
-        ERM(ERM_PINS[2], ErmType.BIG),
-        ERM(ERM_PINS[3], ErmType.BIG),
-    ]
+    erms = []
+    for erm in ERM_PINS[:4]:
+        erms.append(ERM(erm, ErmType.BIG))
+    for erm in ERM_PINS[4:]:
+        erms.append(ERM(erm, ErmType.SMALL))
     psus = [
         PSU(PSU1_PORT, name="PSU1", idle_voltage=0.0),
         PSU(PSU2_PORT, name="PSU2", idle_voltage=0.0),

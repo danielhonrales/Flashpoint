@@ -1,0 +1,85 @@
+{
+  "erm_activations": [
+    {
+      "erms": [
+        9,
+        10,
+        8,
+        11
+      ],
+      "start": 0.0,
+      "duration": 3.0
+    },
+    {
+      "erms": [
+        3,
+        2
+      ],
+      "start": 0.0,
+      "duration": 0.05
+    },
+    {
+      "erms": [
+        3,
+        2
+      ],
+      "start": 0.5,
+      "duration": 0.05
+    },
+    {
+      "erms": [
+        3,
+        2
+      ],
+      "start": 1.0,
+      "duration": 0.05
+    },
+    {
+      "erms": [
+        3,
+        2
+      ],
+      "start": 1.5,
+      "duration": 0.05
+    },
+    {
+      "erms": [
+        3,
+        2
+      ],
+      "start": 2.0,
+      "duration": 0.05
+    },
+    {
+      "erms": [
+        3,
+        2
+      ],
+      "start": 2.5,
+      "duration": 0.05
+    },
+    {
+      "erms": [
+        3,
+        2
+      ],
+      "start": 3.0,
+      "duration": 0.05
+    }
+  ],
+  "psu_activations": [
+    {
+      "psu": 0,
+      "start": 0.0,
+      "duration": 3.0,
+      "voltage": 3.5
+    },
+    {
+      "psu": 1,
+      "start": 0.0,
+      "duration": 3.0,
+      "voltage": 3.5
+    }
+  ],
+  "psu_warmup": 0.0
+}

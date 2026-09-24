@@ -1,0 +1,30 @@
+{
+  "erm_activations": [
+    {
+      "erms": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "start": 0.0,
+      "duration": 2.0
+    }
+  ],
+  "psu_activations": [
+    {
+      "psu": 0,
+      "start": 0.0,
+      "duration": 2.0,
+      "voltage": 3.0
+    },
+    {
+      "psu": 1,
+      "start": 0.0,
+      "duration": 2.0,
+      "voltage": 3.0
+    }
+  ]
+}
