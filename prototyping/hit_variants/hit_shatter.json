@@ -1,0 +1,113 @@
+{
+  "erm_activations": [],
+  "peltier_activations": [
+    {
+      "peltier": 0,
+      "start": 0.0,
+      "duration": 1.0,
+      "duty": 0.7,
+      "heat": true
+    },
+    {
+      "peltier": 1,
+      "start": 0.0,
+      "duration": 1.0,
+      "duty": 0.7,
+      "heat": true
+    }
+  ],
+  "peltier_warmup": 0.0,
+  "lra_activations": [
+    {
+      "lra": 0,
+      "start": 0.0,
+      "duration": 0.09,
+      "frequency": 70,
+      "amplitude": 1.0
+    },
+    {
+      "lra": 1,
+      "start": 0.0,
+      "duration": 0.09,
+      "frequency": 70,
+      "amplitude": 1.0
+    },
+    {
+      "lra": 1,
+      "start": 0.11,
+      "duration": 0.055,
+      "frequency": 70.0,
+      "amplitude": 0.9
+    },
+    {
+      "lra": 1,
+      "start": 0.163957,
+      "duration": 0.052268,
+      "frequency": 66.4,
+      "amplitude": 0.825
+    },
+    {
+      "lra": 0,
+      "start": 0.219489,
+      "duration": 0.049456,
+      "frequency": 62.8,
+      "amplitude": 0.75
+    },
+    {
+      "lra": 0,
+      "start": 0.28616,
+      "duration": 0.046081,
+      "frequency": 58.8,
+      "amplitude": 0.662
+    },
+    {
+      "lra": 0,
+      "start": 0.353002,
+      "duration": 0.042696,
+      "frequency": 55.0,
+      "amplitude": 0.577
+    },
+    {
+      "lra": 0,
+      "start": 0.440032,
+      "duration": 0.03829,
+      "frequency": 50.5,
+      "amplitude": 0.471
+    },
+    {
+      "lra": 1,
+      "start": 0.521736,
+      "duration": 0.034153,
+      "frequency": 46.6,
+      "amplitude": 0.376
+    },
+    {
+      "lra": 0,
+      "start": 0.62243,
+      "duration": 0.029054,
+      "frequency": 42.1,
+      "amplitude": 0.268
+    },
+    {
+      "lra": 1,
+      "start": 0.730595,
+      "duration": 0.023577,
+      "frequency": 37.8,
+      "amplitude": 0.165
+    },
+    {
+      "lra": 0,
+      "start": 0.853189,
+      "duration": 0.018,
+      "frequency": 33.5,
+      "amplitude": 0.072
+    },
+    {
+      "lra": 1,
+      "start": 0.853189,
+      "duration": 0.018,
+      "frequency": 33.5,
+      "amplitude": 0.072
+    }
+  ]
+}

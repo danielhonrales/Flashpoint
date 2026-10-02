@@ -1,0 +1,136 @@
+{
+  "erm_activations": [
+    {
+      "erms": [
+        0
+      ],
+      "start": 0.15,
+      "duration": 0.320937,
+      "intensity": 0.639
+    },
+    {
+      "erms": [
+        1
+      ],
+      "start": 0.45,
+      "duration": 0.320937,
+      "intensity": 0.559
+    },
+    {
+      "erms": [
+        2
+      ],
+      "start": 0.1,
+      "duration": 0.320937,
+      "intensity": 0.616
+    },
+    {
+      "erms": [
+        3
+      ],
+      "start": 0.4,
+      "duration": 0.320937,
+      "intensity": 0.549
+    },
+    {
+      "erms": [
+        4
+      ],
+      "start": 0.7,
+      "duration": 0.320937,
+      "intensity": 0.482
+    },
+    {
+      "erms": [
+        5
+      ],
+      "start": 0.1,
+      "duration": 0.320937,
+      "intensity": 0.616
+    },
+    {
+      "erms": [
+        6
+      ],
+      "start": 0.4,
+      "duration": 0.320937,
+      "intensity": 0.549
+    },
+    {
+      "erms": [
+        7
+      ],
+      "start": 0.7,
+      "duration": 0.320937,
+      "intensity": 0.482
+    }
+  ],
+  "peltier_activations": [
+    {
+      "peltier": 0,
+      "start": 0.0,
+      "duration": 1.0,
+      "duty": 0.7,
+      "heat": true
+    },
+    {
+      "peltier": 1,
+      "start": 0.0,
+      "duration": 1.0,
+      "duty": 0.7,
+      "heat": true
+    }
+  ],
+  "peltier_warmup": 0.0,
+  "lra_activations": [
+    {
+      "lra": 1,
+      "start": 0.11,
+      "duration": 0.05,
+      "frequency": 79,
+      "amplitude": 0.83
+    },
+    {
+      "lra": 1,
+      "start": 0.365,
+      "duration": 0.05,
+      "frequency": 73,
+      "amplitude": 0.572
+    },
+    {
+      "lra": 1,
+      "start": 0.72,
+      "duration": 0.05,
+      "frequency": 67,
+      "amplitude": 0.394
+    },
+    {
+      "lra": 0,
+      "start": 0.62,
+      "duration": 0.05,
+      "frequency": 82,
+      "amplitude": 1.0
+    },
+    {
+      "lra": 0,
+      "start": 0.825,
+      "duration": 0.05,
+      "frequency": 76,
+      "amplitude": 0.689
+    },
+    {
+      "lra": 0,
+      "start": 1.13,
+      "duration": 0.05,
+      "frequency": 70,
+      "amplitude": 0.475
+    },
+    {
+      "lra": 0,
+      "start": 1.535,
+      "duration": 0.05,
+      "frequency": 64,
+      "amplitude": 0.327
+    }
+  ]
+}

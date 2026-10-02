@@ -1,0 +1,470 @@
+{
+  "erm_activations": [],
+  "peltier_activations": [
+    {
+      "peltier": 0,
+      "start": 0.0,
+      "duration": 1.0,
+      "duty": 0.7,
+      "heat": true
+    },
+    {
+      "peltier": 1,
+      "start": 0.0,
+      "duration": 1.0,
+      "duty": 0.7,
+      "heat": true
+    }
+  ],
+  "peltier_warmup": 0.0,
+  "lra_activations": [
+    {
+      "lra": 0,
+      "start": 0.0,
+      "duration": 0.06,
+      "frequency": 70,
+      "amplitude": 1.0
+    },
+    {
+      "lra": 1,
+      "start": 0.0,
+      "duration": 0.06,
+      "frequency": 70,
+      "amplitude": 1.0
+    },
+    {
+      "lra": 0,
+      "start": 0.06,
+      "duration": 0.02,
+      "frequency": 60.0,
+      "amplitude": 0.75
+    },
+    {
+      "lra": 1,
+      "start": 0.06,
+      "duration": 0.02,
+      "frequency": 60.0,
+      "amplitude": 0.75
+    },
+    {
+      "lra": 0,
+      "start": 0.08,
+      "duration": 0.02,
+      "frequency": 59.6,
+      "amplitude": 0.611
+    },
+    {
+      "lra": 1,
+      "start": 0.08,
+      "duration": 0.02,
+      "frequency": 59.6,
+      "amplitude": 0.611
+    },
+    {
+      "lra": 0,
+      "start": 0.1,
+      "duration": 0.02,
+      "frequency": 59.2,
+      "amplitude": 0.357
+    },
+    {
+      "lra": 1,
+      "start": 0.1,
+      "duration": 0.02,
+      "frequency": 59.2,
+      "amplitude": 0.357
+    },
+    {
+      "lra": 0,
+      "start": 0.12,
+      "duration": 0.02,
+      "frequency": 58.9,
+      "amplitude": 0.161
+    },
+    {
+      "lra": 1,
+      "start": 0.12,
+      "duration": 0.02,
+      "frequency": 58.9,
+      "amplitude": 0.161
+    },
+    {
+      "lra": 0,
+      "start": 0.14,
+      "duration": 0.02,
+      "frequency": 58.5,
+      "amplitude": 0.14
+    },
+    {
+      "lra": 1,
+      "start": 0.14,
+      "duration": 0.02,
+      "frequency": 58.5,
+      "amplitude": 0.14
+    },
+    {
+      "lra": 0,
+      "start": 0.16,
+      "duration": 0.02,
+      "frequency": 58.1,
+      "amplitude": 0.277
+    },
+    {
+      "lra": 1,
+      "start": 0.16,
+      "duration": 0.02,
+      "frequency": 58.1,
+      "amplitude": 0.277
+    },
+    {
+      "lra": 0,
+      "start": 0.18,
+      "duration": 0.02,
+      "frequency": 57.8,
+      "amplitude": 0.447
+    },
+    {
+      "lra": 1,
+      "start": 0.18,
+      "duration": 0.02,
+      "frequency": 57.8,
+      "amplitude": 0.447
+    },
+    {
+      "lra": 0,
+      "start": 0.2,
+      "duration": 0.02,
+      "frequency": 57.4,
+      "amplitude": 0.516
+    },
+    {
+      "lra": 1,
+      "start": 0.2,
+      "duration": 0.02,
+      "frequency": 57.4,
+      "amplitude": 0.516
+    },
+    {
+      "lra": 0,
+      "start": 0.22,
+      "duration": 0.02,
+      "frequency": 57.0,
+      "amplitude": 0.434
+    },
+    {
+      "lra": 1,
+      "start": 0.22,
+      "duration": 0.02,
+      "frequency": 57.0,
+      "amplitude": 0.434
+    },
+    {
+      "lra": 0,
+      "start": 0.24,
+      "duration": 0.02,
+      "frequency": 56.6,
+      "amplitude": 0.263
+    },
+    {
+      "lra": 1,
+      "start": 0.24,
+      "duration": 0.02,
+      "frequency": 56.6,
+      "amplitude": 0.263
+    },
+    {
+      "lra": 0,
+      "start": 0.26,
+      "duration": 0.02,
+      "frequency": 56.2,
+      "amplitude": 0.118
+    },
+    {
+      "lra": 1,
+      "start": 0.26,
+      "duration": 0.02,
+      "frequency": 56.2,
+      "amplitude": 0.118
+    },
+    {
+      "lra": 0,
+      "start": 0.28,
+      "duration": 0.02,
+      "frequency": 55.9,
+      "amplitude": 0.085
+    },
+    {
+      "lra": 1,
+      "start": 0.28,
+      "duration": 0.02,
+      "frequency": 55.9,
+      "amplitude": 0.085
+    },
+    {
+      "lra": 0,
+      "start": 0.3,
+      "duration": 0.02,
+      "frequency": 55.5,
+      "amplitude": 0.159
+    },
+    {
+      "lra": 1,
+      "start": 0.3,
+      "duration": 0.02,
+      "frequency": 55.5,
+      "amplitude": 0.159
+    },
+    {
+      "lra": 0,
+      "start": 0.32,
+      "duration": 0.02,
+      "frequency": 55.1,
+      "amplitude": 0.264
+    },
+    {
+      "lra": 1,
+      "start": 0.32,
+      "duration": 0.02,
+      "frequency": 55.1,
+      "amplitude": 0.264
+    },
+    {
+      "lra": 0,
+      "start": 0.34,
+      "duration": 0.02,
+      "frequency": 54.8,
+      "amplitude": 0.312
+    },
+    {
+      "lra": 1,
+      "start": 0.34,
+      "duration": 0.02,
+      "frequency": 54.8,
+      "amplitude": 0.312
+    },
+    {
+      "lra": 0,
+      "start": 0.36,
+      "duration": 0.02,
+      "frequency": 54.4,
+      "amplitude": 0.268
+    },
+    {
+      "lra": 1,
+      "start": 0.36,
+      "duration": 0.02,
+      "frequency": 54.4,
+      "amplitude": 0.268
+    },
+    {
+      "lra": 0,
+      "start": 0.38,
+      "duration": 0.02,
+      "frequency": 54.0,
+      "amplitude": 0.166
+    },
+    {
+      "lra": 1,
+      "start": 0.38,
+      "duration": 0.02,
+      "frequency": 54.0,
+      "amplitude": 0.166
+    },
+    {
+      "lra": 0,
+      "start": 0.4,
+      "duration": 0.02,
+      "frequency": 53.6,
+      "amplitude": 0.074
+    },
+    {
+      "lra": 1,
+      "start": 0.4,
+      "duration": 0.02,
+      "frequency": 53.6,
+      "amplitude": 0.074
+    },
+    {
+      "lra": 0,
+      "start": 0.42,
+      "duration": 0.02,
+      "frequency": 53.2,
+      "amplitude": 0.044
+    },
+    {
+      "lra": 1,
+      "start": 0.42,
+      "duration": 0.02,
+      "frequency": 53.2,
+      "amplitude": 0.044
+    },
+    {
+      "lra": 0,
+      "start": 0.44,
+      "duration": 0.02,
+      "frequency": 52.9,
+      "amplitude": 0.075
+    },
+    {
+      "lra": 1,
+      "start": 0.44,
+      "duration": 0.02,
+      "frequency": 52.9,
+      "amplitude": 0.075
+    },
+    {
+      "lra": 0,
+      "start": 0.46,
+      "duration": 0.02,
+      "frequency": 52.5,
+      "amplitude": 0.125
+    },
+    {
+      "lra": 1,
+      "start": 0.46,
+      "duration": 0.02,
+      "frequency": 52.5,
+      "amplitude": 0.125
+    },
+    {
+      "lra": 0,
+      "start": 0.48,
+      "duration": 0.02,
+      "frequency": 52.1,
+      "amplitude": 0.147
+    },
+    {
+      "lra": 1,
+      "start": 0.48,
+      "duration": 0.02,
+      "frequency": 52.1,
+      "amplitude": 0.147
+    },
+    {
+      "lra": 0,
+      "start": 0.5,
+      "duration": 0.02,
+      "frequency": 51.8,
+      "amplitude": 0.125
+    },
+    {
+      "lra": 1,
+      "start": 0.5,
+      "duration": 0.02,
+      "frequency": 51.8,
+      "amplitude": 0.125
+    },
+    {
+      "lra": 0,
+      "start": 0.52,
+      "duration": 0.02,
+      "frequency": 51.4,
+      "amplitude": 0.076
+    },
+    {
+      "lra": 1,
+      "start": 0.52,
+      "duration": 0.02,
+      "frequency": 51.4,
+      "amplitude": 0.076
+    },
+    {
+      "lra": 0,
+      "start": 0.54,
+      "duration": 0.02,
+      "frequency": 51.0,
+      "amplitude": 0.032
+    },
+    {
+      "lra": 1,
+      "start": 0.54,
+      "duration": 0.02,
+      "frequency": 51.0,
+      "amplitude": 0.032
+    },
+    {
+      "lra": 0,
+      "start": 0.56,
+      "duration": 0.02,
+      "frequency": 50.6,
+      "amplitude": 0.015
+    },
+    {
+      "lra": 1,
+      "start": 0.56,
+      "duration": 0.02,
+      "frequency": 50.6,
+      "amplitude": 0.015
+    },
+    {
+      "lra": 0,
+      "start": 0.58,
+      "duration": 0.02,
+      "frequency": 50.2,
+      "amplitude": 0.021
+    },
+    {
+      "lra": 1,
+      "start": 0.58,
+      "duration": 0.02,
+      "frequency": 50.2,
+      "amplitude": 0.021
+    },
+    {
+      "lra": 0,
+      "start": 0.6,
+      "duration": 0.02,
+      "frequency": 49.9,
+      "amplitude": 0.031
+    },
+    {
+      "lra": 1,
+      "start": 0.6,
+      "duration": 0.02,
+      "frequency": 49.9,
+      "amplitude": 0.031
+    },
+    {
+      "lra": 0,
+      "start": 0.62,
+      "duration": 0.02,
+      "frequency": 49.5,
+      "amplitude": 0.032
+    },
+    {
+      "lra": 1,
+      "start": 0.62,
+      "duration": 0.02,
+      "frequency": 49.5,
+      "amplitude": 0.032
+    },
+    {
+      "lra": 0,
+      "start": 0.64,
+      "duration": 0.02,
+      "frequency": 49.1,
+      "amplitude": 0.021
+    },
+    {
+      "lra": 1,
+      "start": 0.64,
+      "duration": 0.02,
+      "frequency": 49.1,
+      "amplitude": 0.021
+    },
+    {
+      "lra": 0,
+      "start": 0.66,
+      "duration": 0.02,
+      "frequency": 48.8,
+      "amplitude": 0.008
+    },
+    {
+      "lra": 1,
+      "start": 0.66,
+      "duration": 0.02,
+      "frequency": 48.8,
+      "amplitude": 0.008
+    }
+  ]
+}

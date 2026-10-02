@@ -1,0 +1,194 @@
+{
+  "erm_activations": [
+    {
+      "erms": [
+        4,
+        7
+      ],
+      "start": 0.04,
+      "duration": 0.2,
+      "intensity": 0.294
+    },
+    {
+      "erms": [
+        1
+      ],
+      "start": 0.48,
+      "duration": 0.2,
+      "intensity": 0.294
+    },
+    {
+      "erms": [
+        3,
+        6
+      ],
+      "start": 0.92,
+      "duration": 0.2,
+      "intensity": 0.294
+    },
+    {
+      "erms": [
+        0
+      ],
+      "start": 1.36,
+      "duration": 0.2,
+      "intensity": 0.294
+    },
+    {
+      "erms": [
+        2,
+        5
+      ],
+      "start": 1.8,
+      "duration": 0.2,
+      "intensity": 0.294
+    },
+    {
+      "erms": [
+        1,
+        4,
+        7
+      ],
+      "start": 2.0,
+      "duration": 0.055714,
+      "intensity": 0.6
+    },
+    {
+      "erms": [
+        3,
+        6
+      ],
+      "start": 2.094286,
+      "duration": 0.055714,
+      "intensity": 0.6
+    },
+    {
+      "erms": [
+        2,
+        5,
+        0
+      ],
+      "start": 2.188571,
+      "duration": 0.055714,
+      "intensity": 1.0
+    },
+    {
+      "erms": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "start": 2.297857,
+      "duration": 0.1,
+      "intensity": 1.0
+    }
+  ],
+  "peltier_activations": [
+    {
+      "peltier": 0,
+      "start": 0.0,
+      "duration": 2.397857,
+      "duty": 0.7,
+      "heat": false
+    },
+    {
+      "peltier": 1,
+      "start": 0.0,
+      "duration": 2.397857,
+      "duty": 0.7,
+      "heat": false
+    }
+  ],
+  "peltier_warmup": 0.0,
+  "lra_activations": [
+    {
+      "lra": 0,
+      "start": 0.04,
+      "duration": 0.042857,
+      "frequency": 70.0,
+      "amplitude": 0.36
+    },
+    {
+      "lra": 0,
+      "start": 0.92,
+      "duration": 0.042857,
+      "frequency": 70.0,
+      "amplitude": 0.36
+    },
+    {
+      "lra": 1,
+      "start": 0.92,
+      "duration": 0.042857,
+      "frequency": 70.0,
+      "amplitude": 0.36
+    },
+    {
+      "lra": 1,
+      "start": 1.8,
+      "duration": 0.06,
+      "frequency": 70.0,
+      "amplitude": 0.36
+    },
+    {
+      "lra": 1,
+      "start": 2.278571,
+      "duration": 0.016071,
+      "frequency": 95.0,
+      "amplitude": 1.0
+    },
+    {
+      "lra": 1,
+      "start": 2.294642,
+      "duration": 0.019286,
+      "frequency": 55.0,
+      "amplitude": 1.0
+    },
+    {
+      "lra": 1,
+      "start": 2.313928,
+      "duration": 0.019286,
+      "frequency": 52.0,
+      "amplitude": 1.0
+    },
+    {
+      "lra": 1,
+      "start": 2.333214,
+      "duration": 0.025714,
+      "frequency": 48.0,
+      "amplitude": 1.0
+    },
+    {
+      "lra": 0,
+      "start": 2.278571,
+      "duration": 0.016071,
+      "frequency": 95.0,
+      "amplitude": 1.0
+    },
+    {
+      "lra": 0,
+      "start": 2.294642,
+      "duration": 0.019286,
+      "frequency": 55.0,
+      "amplitude": 1.0
+    },
+    {
+      "lra": 0,
+      "start": 2.313928,
+      "duration": 0.019286,
+      "frequency": 52.0,
+      "amplitude": 1.0
+    },
+    {
+      "lra": 0,
+      "start": 2.333214,
+      "duration": 0.025714,
+      "frequency": 48.0,
+      "amplitude": 1.0
+    }
+  ]
+}

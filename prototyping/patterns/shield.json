@@ -1,0 +1,51 @@
+{
+  "erm_activations": [
+    {
+      "erms": [
+        0,
+        1
+      ],
+      "start": 0.0,
+      "duration": 0.552073,
+      "intensity": 0.113
+    },
+    {
+      "erms": [
+        3,
+        6
+      ],
+      "start": 0.223963,
+      "duration": 0.552073,
+      "intensity": 0.107
+    },
+    {
+      "erms": [
+        2,
+        5,
+        4,
+        7
+      ],
+      "start": 0.447927,
+      "duration": 0.552073,
+      "intensity": 0.1
+    }
+  ],
+  "peltier_activations": [],
+  "peltier_warmup": 0.0,
+  "lra_activations": [
+    {
+      "lra": 0,
+      "start": 0.0,
+      "duration": 1.0,
+      "frequency": 40.0,
+      "amplitude": 0.138
+    },
+    {
+      "lra": 1,
+      "start": 0.0,
+      "duration": 1.0,
+      "frequency": 40.0,
+      "amplitude": 0.138
+    }
+  ]
+}

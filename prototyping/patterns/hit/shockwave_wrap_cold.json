@@ -1,0 +1,213 @@
+{
+  "erm_activations": [
+    {
+      "erms": [
+        0,
+        1
+      ],
+      "start": 0.0,
+      "duration": 0.09,
+      "intensity": 0.7
+    },
+    {
+      "erms": [
+        0
+      ],
+      "start": 0.12,
+      "duration": 0.05,
+      "intensity": 0.437
+    },
+    {
+      "erms": [
+        1
+      ],
+      "start": 0.12,
+      "duration": 0.05,
+      "intensity": 0.332
+    },
+    {
+      "erms": [
+        1
+      ],
+      "start": 0.21,
+      "duration": 0.05,
+      "intensity": 0.345
+    },
+    {
+      "erms": [
+        1
+      ],
+      "start": 0.24,
+      "duration": 0.05,
+      "intensity": 0.41
+    },
+    {
+      "erms": [
+        2,
+        3,
+        4
+      ],
+      "start": 0.3,
+      "duration": 0.09,
+      "intensity": 0.637
+    },
+    {
+      "erms": [
+        2
+      ],
+      "start": 0.39,
+      "duration": 0.05,
+      "intensity": 0.424
+    },
+    {
+      "erms": [
+        3
+      ],
+      "start": 0.39,
+      "duration": 0.05,
+      "intensity": 0.352
+    },
+    {
+      "erms": [
+        3
+      ],
+      "start": 0.54,
+      "duration": 0.05,
+      "intensity": 0.34
+    },
+    {
+      "erms": [
+        4
+      ],
+      "start": 0.54,
+      "duration": 0.05,
+      "intensity": 0.4
+    },
+    {
+      "erms": [
+        5,
+        6,
+        7
+      ],
+      "start": 0.6,
+      "duration": 0.09,
+      "intensity": 0.583
+    },
+    {
+      "erms": [
+        5
+      ],
+      "start": 0.72,
+      "duration": 0.05,
+      "intensity": 0.421
+    },
+    {
+      "erms": [
+        6
+      ],
+      "start": 0.72,
+      "duration": 0.05,
+      "intensity": 0.35
+    },
+    {
+      "erms": [
+        5
+      ],
+      "start": 0.75,
+      "duration": 0.05,
+      "intensity": 0.385
+    },
+    {
+      "erms": [
+        6
+      ],
+      "start": 0.75,
+      "duration": 0.05,
+      "intensity": 0.333
+    },
+    {
+      "erms": [
+        7
+      ],
+      "start": 0.93,
+      "duration": 0.05,
+      "intensity": 0.368
+    },
+    {
+      "erms": [
+        7
+      ],
+      "start": 0.96,
+      "duration": 0.05,
+      "intensity": 0.368
+    }
+  ],
+  "peltier_activations": [
+    {
+      "peltier": 0,
+      "start": 0.0,
+      "duration": 2.0,
+      "duty": 1.0,
+      "heat": false
+    },
+    {
+      "peltier": 1,
+      "start": 0.0,
+      "duration": 2.0,
+      "duty": 1.0,
+      "heat": false
+    }
+  ],
+  "peltier_warmup": 0.0,
+  "lra_activations": [
+    {
+      "lra": 0,
+      "start": 0.02,
+      "duration": 0.05,
+      "frequency": 82,
+      "amplitude": 1.0
+    },
+    {
+      "lra": 1,
+      "start": 0.11,
+      "duration": 0.05,
+      "frequency": 79,
+      "amplitude": 0.83
+    },
+    {
+      "lra": 0,
+      "start": 0.225,
+      "duration": 0.05,
+      "frequency": 76,
+      "amplitude": 0.689
+    },
+    {
+      "lra": 1,
+      "start": 0.365,
+      "duration": 0.05,
+      "frequency": 73,
+      "amplitude": 0.572
+    },
+    {
+      "lra": 0,
+      "start": 0.53,
+      "duration": 0.05,
+      "frequency": 70,
+      "amplitude": 0.475
+    },
+    {
+      "lra": 1,
+      "start": 0.72,
+      "duration": 0.05,
+      "frequency": 67,
+      "amplitude": 0.394
+    },
+    {
+      "lra": 0,
+      "start": 0.935,
+      "duration": 0.05,
+      "frequency": 64,
+      "amplitude": 0.327
+    }
+  ]
+}
