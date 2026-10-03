@@ -21,10 +21,14 @@ lowered early. If they're still active when it finishes, it plays again (another
 has several), for as long as they last, with only REPEAT_LEAD between plays. The shield loops
 seamlessly instead: its pattern is played back to back as one stimulus (up to LOOP_S). States
 count as active only while the game keeps sending (its snapshots come every 250 ms), so a dropped
-connection doesn't leave a stimulus looping. Once a run of repeats would keep a Peltier on for
-longer than its limit in all (PELTIER_MAX_HEAT_S heating, PELTIER_MAX_COOL_S cooling), further
-repeats play without the Peltiers. The first BOOSTED_PLAYS plays of an action (and every hit, a
-single play) run the Peltiers at BOOST_DUTY, to reach the temperature quickly. Once the grenade is thrown (the "iceThrows" counter goes up), ice_bomb plays to the
+connection doesn't leave a stimulus looping. The first BOOSTED_PLAYS plays of an action (and
+every hit, a single play) run the Peltiers at BOOST_DUTY, to reach the temperature quickly.
+
+An overheat counter guards the skin: it goes up 1 per second while any Peltier is on (heating or
+cooling) and down OVERHEAT_DECAY per second while they're all off. Past OVERHEAT_THRESHOLD every
+Peltier's duty is scaled down, the more the higher the counter, to nothing at OVERHEAT_OFF, so
+long or back-to-back thermal stimuli fade instead of getting painful; once it reaches OVERHEAT_OFF
+they stay off until it is back down to OVERHEAT_RESUME. Once the grenade is thrown (the "iceThrows" counter goes up), ice_bomb plays to the
 end. States count as ended once they have stayed ended for END_GRACE seconds, which bridges the
 game switching from fire_charge to fire. A hit interrupts the shield stimulus rather than stopping
 it: once the hit has played, the shield stimulus carries on from where it would be by then, if the
@@ -36,13 +40,14 @@ actuators: a new one stops the one playing, but a stimulus that is already playi
 except the hit (the game reports a block up to 4 times a second while a beam is on the shield):
 each block starts a new hit variant. A hit heats or cools to match the attack the game names in
 the message's ATTACK_FIELD (a fire beam is hot, an ice bomb cold); if it doesn't name one, a new
-hit heats if the last one heated and cooled if it cooled, so the Peltiers keep going one way. Once a chain of hits has kept them on for PELTIER_MAX_COOL_S,
-further hits play without the Peltiers until the chain ends.
+hit heats if the last one heated and cooled if it cooled, so the Peltiers keep going one way.
 
-Usage: python3 pi_receiver.py [--device quest-a] [--bind 192.168.1.5] [--port 7779]
+Usage: python3 pi_receiver.py [--device quest-a] [--bind 192.168.1.249] [--port 7779]
 
-Each Quest's combat-output.json must point at this Pi, e.g.
-    {"udpEnabled":true,"host":"192.168.1.5","port":7779,"deviceLabel":"quest-a"}
+It listens on every address the Pi has, so it keeps working when the Pi's address changes (a new
+network, a new DHCP lease); it logs the Pi's addresses at startup. Each Quest's
+combat-output.json must point at one of them, e.g.
+    {"udpEnabled":true,"host":"192.168.1.249","port":7779,"deviceLabel":"quest-a"}
 Both Quests send here by default, so pass --device to react only to the wearer's own headset.
 
 Needs stimulus_editor.py (which sets up the devices, as configured at its top) and the stimuli in
@@ -52,25 +57,28 @@ listed at startup.
 
 import argparse
 import errno
+import functools
 import json
+import math
 import os
 import random
 import signal
 import socket
+import subprocess
 import sys
 import threading
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 
-from stimulus_editor import (PELTIER_MAX_COOL_S, PELTIER_MAX_DUTY, ErmActivation, LraActivation,
-                             PeltierActivation, Stimulus, StimulusController, make_controller, peltier_limit)
+from stimulus_editor import (PELTIER_MAX_DUTY, ErmActivation, LraActivation, PeltierActivation,
+                             Stimulus, StimulusController, make_controller)
 
 # ----------------------------------------------------------------------------
 # Configuration
 # ----------------------------------------------------------------------------
 
-PI_IP = "192.168.1.5"   # the "host" in each Quest's combat-output.json
+BIND = "0.0.0.0"        # listen on every address the Pi has (--bind picks one instead)
 PORT = 7779
 
 # Counters in every game message, with the event the game sends when each goes up. The stimulus
@@ -105,8 +113,7 @@ COLD_ATTACKS = ("ice", "bomb", "cold", "frost", "grenade")
 TEMPERATURE_MATCHED = {"hit"}   # stimuli whose variant follows the attack's temperature
 
 # Stimuli that start again (another variant, heating or cooling as before) when triggered while
-# already playing, rather than playing on. A chain of them keeps the Peltiers on, so it plays
-# without them once it has run for PELTIER_MAX_COOL_S (there's no thermistor cut-off yet).
+# already playing, rather than playing on.
 RETRIGGER = {"hit"}
 
 # Stimulus -> the stimulus it interrupts. The interrupted one carries on afterwards from where it
@@ -121,6 +128,16 @@ LOOP_S = 60.0           # how long one seamless loop runs (it then repeats like 
 BOOSTED_PLAYS = 2       # an action's first plays run the Peltiers at BOOST_DUTY...
 BOOST_DUTY = 1.0        # ...instead of the pattern's own duty (both at 1.0 draw ~3.2 A)
 SESSION_TIMEOUT = 60.0  # seconds without a message before a session is forgotten
+
+# Overheat counter (there's no thermistor cut-off yet): +1 per second while any Peltier is on,
+# -OVERHEAT_DECAY per second while none is. Above OVERHEAT_THRESHOLD the Peltiers' duty is scaled
+# down in a straight line, to nothing at OVERHEAT_OFF (with 5 and 10, 8 gives 40%). Once it reaches
+# OVERHEAT_OFF the Peltiers stay off until it has fallen back to OVERHEAT_RESUME.
+OVERHEAT_THRESHOLD = 5.0
+OVERHEAT_OFF = 10.0
+OVERHEAT_RESUME = 8.0
+OVERHEAT_DECAY = 1.0
+OVERHEAT_TICK = 0.1     # seconds between counter updates
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PATTERNS = os.path.join(HERE, "patterns")
@@ -137,6 +154,15 @@ def load_variants(name):
     else:
         paths = [os.path.join(PATTERNS, f"{name}.json")]
     return [(os.path.basename(path)[:-5], Stimulus.load(path)) for path in paths]
+
+
+def own_addresses():
+    """This Pi's IPv4 addresses on its networks (no internet needed), or [] if it has none."""
+    try:
+        out = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=2).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [address for address in out.split() if "." in address]
 
 
 def log(text):
@@ -301,6 +327,87 @@ def remaining(stimulus: Stimulus, offset: float) -> Stimulus:
                      for p in left(stimulus.lra_activations)])
 
 
+class OverheatGovernor:
+    """Keeps the overheat counter and scales the Peltiers' duty by it. It takes over each
+    Peltier's on() and off(): a stimulus's on() is remembered as the duty asked for, and the
+    Peltier is driven at that duty times scale(), adjusted every OVERHEAT_TICK as the counter
+    changes. Peltiers scaled to nothing are switched off (and so stop adding to the counter)."""
+
+    def __init__(self, peltiers):
+        self.peltiers = peltiers
+        self.counter = 0.0
+        self.cut_off = False    # reached OVERHEAT_OFF, and not yet back down to OVERHEAT_RESUME
+        self._wanted = {}   # Peltier index -> (duty, heat) the stimulus asks for
+        self._on = [p.on for p in peltiers]
+        self._off = [p.off for p in peltiers]
+        for i, p in enumerate(peltiers):
+            p.on = functools.partial(self._request_on, i)
+            p.off = functools.partial(self._request_off, i)
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def scale(self):
+        """The fraction of the asked-for duty the Peltiers get at the present count."""
+        if self.cut_off:
+            return 0.0
+        return min(1.0, max(0.0, (OVERHEAT_OFF - self.counter)
+                            / (OVERHEAT_OFF - OVERHEAT_THRESHOLD)))
+
+    def _request_on(self, i, duty, heat):
+        self.peltiers[i].check(duty, heat)
+        with self._lock:
+            self._wanted[i] = (duty, heat)
+            self._apply(i)
+
+    def _request_off(self, i):
+        with self._lock:
+            self._wanted.pop(i, None)
+            self._off[i]()
+
+    def _apply(self, i):
+        """Drive Peltier i at its asked-for duty, scaled (the lock is held)."""
+        peltier, wanted = self.peltiers[i], self._wanted.get(i)
+        duty = wanted[0] * self.scale() if wanted else 0.0
+        if duty < 0.01:
+            if peltier.is_on:
+                self._off[i]()
+        elif abs(duty - peltier.duty) > 0.005 or peltier.heat != wanted[1]:
+            self._on[i](duty, wanted[1])
+
+    def _run(self):
+        last = time.perf_counter()
+        while not self._stop.wait(OVERHEAT_TICK):
+            now = time.perf_counter()
+            with self._lock:
+                before = self.counter
+                if any(p.is_on for p in self.peltiers):
+                    self.counter += now - last
+                else:
+                    self.counter = max(0.0, self.counter - OVERHEAT_DECAY * (now - last))
+                was_cut_off = self.cut_off
+                if self.counter >= OVERHEAT_OFF:
+                    self.cut_off = True
+                elif self.counter <= OVERHEAT_RESUME:
+                    self.cut_off = False
+                for i in range(len(self.peltiers)):
+                    self._apply(i)
+                after, scale = self.counter, self.scale()
+            last = now
+            # Log each whole point while the duty is cut, and the step back to full.
+            if self.cut_off != was_cut_off:
+                log(f"overheat {after:.0f}: Peltiers "
+                    + ("off" if self.cut_off else f"back on at {scale:.0%}"))
+            elif (math.floor(after) != math.floor(before)
+                    and max(before, after) > OVERHEAT_THRESHOLD and not self.cut_off):
+                log(f"overheat {math.floor(after)}: Peltiers at {scale:.0%}")
+
+    def stop(self):
+        self._stop.set()
+        self._thread.join()
+
+
 class Player:
     """Plays one stimulus at a time on a background thread. Only the main thread calls its
     methods; the background thread just runs the controller."""
@@ -322,11 +429,10 @@ class Player:
     def playing(self):
         return self._thread is not None and self._thread.is_alive()
 
-    def play(self, name, thermal=True, lead=0.2, boost=False, heat=None):
+    def play(self, name, lead=0.2, boost=False, heat=None):
         """Start the named stimulus (a random variant of it), stopping the one playing, or
         pausing it if the new one interrupts it. False if the named stimulus was already playing.
-        thermal=False leaves out its Peltier periods, boost=True runs them at BOOST_DUTY; `lead`
-        is the pause before it starts. heat=True or False picks a variant that heats or cools."""
+        boost=True runs its Peltier periods at BOOST_DUTY; `lead` is the pause before it starts. heat=True or False picks a variant that heats or cools."""
         retrigger = self.playing() and self.name == name
         if retrigger and name not in RETRIGGER:
             return False
@@ -346,9 +452,9 @@ class Player:
         if len(variants) > 1 and self.name == name:     # not the same variant twice running
             variants = [v for v in variants if v[0] != self.variant]
         label, stimulus = random.choice(variants)
-        if not thermal or boost:
-            peltiers = ([replace(p, duty=min(BOOST_DUTY, PELTIER_MAX_DUTY))
-                         for p in stimulus.peltier_activations] if thermal else [])
+        if boost:
+            peltiers = [replace(p, duty=min(BOOST_DUTY, PELTIER_MAX_DUTY))
+                        for p in stimulus.peltier_activations]
             stimulus = Stimulus(stimulus.erm_activations, peltiers, stimulus.peltier_warmup,
                                 stimulus.lra_activations)
         if name in SEAMLESS:
@@ -419,14 +525,15 @@ class Player:
 
 def main():
     parser = argparse.ArgumentParser(description="Play stimuli when the thermal game reports combat events.")
-    parser.add_argument("--bind", default=PI_IP,
-                        help=f"address to listen on (default {PI_IP}; 0.0.0.0 for any)")
+    parser.add_argument("--bind", default=BIND,
+                        help=f"address to listen on (default {BIND}: any)")
     parser.add_argument("--port", type=int, default=PORT)
     parser.add_argument("--device", help="only react to this headset's deviceLabel, e.g. quest-a")
     args = parser.parse_args()
     signal.signal(signal.SIGTERM, lambda *args: sys.exit(0))    # systemctl stop: clean up too
 
     controller = make_controller()
+    governor = OverheatGovernor(controller.peltiers)
     player = Player(controller, {})
     try:
         for name in dict.fromkeys([name for _, _, name in COUNTER_TRIGGERS]
@@ -452,9 +559,7 @@ def main():
 
         tracker = SessionTracker()
         repeat = None           # the state-triggered stimulus to repeat while its states last
-        repeat_since = 0.0      # when that run of repeats began, for the Peltier limit
         repeat_plays = 0        # how many times it has played in this run
-        chain_since = 0.0       # when the current chain of RETRIGGER plays began
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             try:
                 sock.bind((args.bind, args.port))
@@ -462,11 +567,20 @@ def main():
                 hint = ("Something else is listening on that port, probably the old dummy receiver:\n"
                         "    sudo systemctl disable --now thermal-game-receiver"
                         if e.errno == errno.EADDRINUSE else
-                        "Give this Pi the address the Quests send to, or pass --bind 0.0.0.0.")
+                        f"This Pi's addresses: {', '.join(own_addresses()) or 'none'}. "
+                        "Pass one of them to --bind, or leave --bind out to listen on any.")
                 sys.exit(f"Can't listen on {args.bind}:{args.port}: {e}\n{hint}")
             sock.settimeout(0.02)   # short, so ends, repeats and resumes are handled promptly
             log(f"Listening on {args.bind}:{args.port}"
                 + (f" for {args.device}" if args.device else " for any headset"))
+            addresses = own_addresses()
+            if addresses:
+                log(f"This Pi's address: {', '.join(addresses)} "
+                    "(the \"host\" in each Quest's combat-output.json)")
+            else:
+                log("This Pi has no network address yet; connect it to the Quests' network")
+            log(f"Overheat counter: Peltiers fade from {OVERHEAT_THRESHOLD:g} to off at "
+                f"{OVERHEAT_OFF:g}, recovering {OVERHEAT_DECAY:g}/s")
             while True:
                 for name, ended_at in tracker.ended(time.perf_counter()):
                     if player.action_ended(name, ended_at):
@@ -477,18 +591,12 @@ def main():
                 now = time.perf_counter()
                 if repeat and not player.playing():
                     if tracker.still_active(repeat, now):
-                        # Heat or cold only while the whole run stays within the Peltier limit
-                        # (the heating one if the stimulus only heats).
                         variants = [s for _, s in player.stimuli[repeat]]
-                        heat_only = all(p.heat for s in variants for p in s.peltier_activations)
-                        longest = max(s.duration for s in variants)
-                        thermal = now - repeat_since + longest <= peltier_limit(heat_only)
                         repeat_plays += 1
-                        boost = thermal and repeat_plays <= BOOSTED_PLAYS and has_peltiers(variants)
-                        player.play(repeat, thermal, REPEAT_LEAD, boost)
+                        boost = repeat_plays <= BOOSTED_PLAYS and has_peltiers(variants)
+                        player.play(repeat, REPEAT_LEAD, boost)
                         which = (f" [{player.variant}]" if len(player.stimuli[repeat]) > 1 else "")
                         log(f"repeat {repeat}{which}, its action is still active"
-                            + ("" if thermal else " (without Peltiers: on too long)")
                             + (f" (Peltiers at {BOOST_DUTY:.0%})" if boost else ""))
                     else:
                         repeat = None
@@ -504,17 +612,12 @@ def main():
                     player.play_out(name)
                 if started:
                     if any(name == started for _, name, _ in STATE_TRIGGERS):
-                        repeat, repeat_since, repeat_plays = started, time.perf_counter(), 1
-                    now = time.perf_counter()
+                        repeat, repeat_plays = started, 1
                     chained = started in RETRIGGER and player.playing() and player.name == started
-                    if not chained:
-                        chain_since = now
-                    longest = max(s.duration for _, s in player.stimuli[started])
-                    thermal = now - chain_since + longest <= PELTIER_MAX_COOL_S
                     # An action's first play (and any hit) gets the Peltier boost.
-                    boost = thermal and has_peltiers([s for _, s in player.stimuli[started]])
+                    boost = has_peltiers([s for _, s in player.stimuli[started]])
                     heat = attack_heats(msg) if started in TEMPERATURE_MATCHED else None
-                    played = player.play(started, thermal, boost=boost, heat=heat)
+                    played = player.play(started, boost=boost, heat=heat)
                     which = (f" [{player.variant}]"
                              if played and len(player.stimuli[started]) > 1 else "")
                     attack = (f" ({ATTACK_FIELD}={msg[ATTACK_FIELD]!r})"
@@ -522,12 +625,12 @@ def main():
                     log(f"{msg.get('device')} {msg['event']}{attack} -> {started}{which}"
                         + ("" if played else " (already playing)")
                         + (" (again)" if played and chained else "")
-                        + ("" if thermal else " (without Peltiers: on too long)")
                         + (f" (Peltiers at {BOOST_DUTY:.0%})" if played and boost else ""))
     except KeyboardInterrupt:
         pass
     finally:
         player.stop()
+        governor.stop()
         controller.close()
 
 
