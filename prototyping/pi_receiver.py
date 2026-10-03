@@ -25,10 +25,14 @@ connection doesn't leave a stimulus looping. The first BOOSTED_PLAYS plays of an
 every hit, a single play) run the Peltiers at BOOST_DUTY, to reach the temperature quickly.
 
 An overheat counter guards the skin: it goes up 1 per second while any Peltier is on (heating or
-cooling) and down OVERHEAT_DECAY per second while they're all off. Past OVERHEAT_THRESHOLD every
-Peltier's duty is scaled down, the more the higher the counter, to nothing at OVERHEAT_OFF, so
-long or back-to-back thermal stimuli fade instead of getting painful; once it reaches OVERHEAT_OFF
-they stay off until it is back down to OVERHEAT_RESUME. Once the grenade is thrown (the "iceThrows" counter goes up), ice_bomb plays to the
+cooling) and down OVERHEAT_DECAY per second while they're all off. Past a threshold a Peltier's
+duty is scaled down, the more the higher the counter, to nothing, so long or back-to-back thermal
+stimuli fade instead of getting painful; once there, it stays off until the counter is back down
+a little. Heating fades sooner and harder than cooling (OVERHEAT_HOT, OVERHEAT_COLD), as heat
+turns painful and cold is better for getting colder. Cold builds up heat in the Peltiers too,
+which makes a hot stimulus after it hotter, so while COLD_STREAK or more cooling stimuli have
+started in the last COLD_STREAK_S seconds, heating runs at COLD_STREAK_HOT of its duty.
+Once the grenade is thrown (the "iceThrows" counter goes up), ice_bomb plays to the
 end. States count as ended once they have stayed ended for END_GRACE seconds, which bridges the
 game switching from fire_charge to fire. A hit interrupts the shield stimulus rather than stopping
 it: once the hit has played, the shield stimulus carries on from where it would be by then, if the
@@ -68,7 +72,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass, field, replace
 
 from stimulus_editor import (PELTIER_MAX_DUTY, ErmActivation, LraActivation, PeltierActivation,
@@ -130,14 +134,19 @@ BOOST_DUTY = 1.0        # ...instead of the pattern's own duty (both at 1.0 draw
 SESSION_TIMEOUT = 60.0  # seconds without a message before a session is forgotten
 
 # Overheat counter (there's no thermistor cut-off yet): +1 per second while any Peltier is on,
-# -OVERHEAT_DECAY per second while none is. Above OVERHEAT_THRESHOLD the Peltiers' duty is scaled
-# down in a straight line, to nothing at OVERHEAT_OFF (with 5 and 10, 8 gives 40%). Once it reaches
-# OVERHEAT_OFF the Peltiers stay off until it has fallen back to OVERHEAT_RESUME.
-OVERHEAT_THRESHOLD = 5.0
-OVERHEAT_OFF = 10.0
-OVERHEAT_RESUME = 8.0
+# heating or cooling, -OVERHEAT_DECAY per second while none is. Each direction has its own
+# (threshold, off, resume): above the threshold a Peltier's duty is scaled down in a straight line,
+# to nothing at off; once the counter reaches off it stays off until it falls back to resume.
+OVERHEAT_HOT = (4.0, 8.0, 6.0)      # heating: at 6, 50%
+OVERHEAT_COLD = (6.0, 14.0, 11.0)   # cooling: at 8, 75%; at 10, 50%
 OVERHEAT_DECAY = 1.0
 OVERHEAT_TICK = 0.1     # seconds between counter updates
+# Cooling builds up heat that makes later heating hotter: while COLD_STREAK or more stimuli that
+# cool (cold hits, ice bomb plays and their repeats) have started within COLD_STREAK_S seconds,
+# heating runs at COLD_STREAK_HOT times the duty the overheat counter gives it.
+COLD_STREAK = 3
+COLD_STREAK_S = 20.0
+COLD_STREAK_HOT = 0.3
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PATTERNS = os.path.join(HERE, "patterns")
@@ -336,7 +345,10 @@ class OverheatGovernor:
     def __init__(self, peltiers):
         self.peltiers = peltiers
         self.counter = 0.0
-        self.cut_off = False    # reached OVERHEAT_OFF, and not yet back down to OVERHEAT_RESUME
+        self.cut_off = set()    # directions (True heating) that reached their off point, and
+                                # aren't yet back down to their resume point
+        self._cold_starts = deque()     # perf_counter() of each recent cooling stimulus's start
+        self.cold_streak = False        # COLD_STREAK of them within COLD_STREAK_S
         self._wanted = {}   # Peltier index -> (duty, heat) the stimulus asks for
         self._on = [p.on for p in peltiers]
         self._off = [p.off for p in peltiers]
@@ -348,12 +360,19 @@ class OverheatGovernor:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
-    def scale(self):
-        """The fraction of the asked-for duty the Peltiers get at the present count."""
-        if self.cut_off:
+    def scale(self, heat):
+        """The fraction of the asked-for duty a Peltier heating (True) or cooling (False) gets
+        at the present count."""
+        if heat in self.cut_off:
             return 0.0
-        return min(1.0, max(0.0, (OVERHEAT_OFF - self.counter)
-                            / (OVERHEAT_OFF - OVERHEAT_THRESHOLD)))
+        threshold, off, _ = OVERHEAT_HOT if heat else OVERHEAT_COLD
+        scale = min(1.0, max(0.0, (off - self.counter) / (off - threshold)))
+        return scale * COLD_STREAK_HOT if heat and self.cold_streak else scale
+
+    def cold_started(self):
+        """A stimulus that cools has started."""
+        with self._lock:
+            self._cold_starts.append(time.perf_counter())
 
     def _request_on(self, i, duty, heat):
         self.peltiers[i].check(duty, heat)
@@ -369,7 +388,7 @@ class OverheatGovernor:
     def _apply(self, i):
         """Drive Peltier i at its asked-for duty, scaled (the lock is held)."""
         peltier, wanted = self.peltiers[i], self._wanted.get(i)
-        duty = wanted[0] * self.scale() if wanted else 0.0
+        duty = wanted[0] * self.scale(wanted[1]) if wanted else 0.0
         if duty < 0.01:
             if peltier.is_on:
                 self._off[i]()
@@ -386,22 +405,29 @@ class OverheatGovernor:
                     self.counter += now - last
                 else:
                     self.counter = max(0.0, self.counter - OVERHEAT_DECAY * (now - last))
-                was_cut_off = self.cut_off
-                if self.counter >= OVERHEAT_OFF:
-                    self.cut_off = True
-                elif self.counter <= OVERHEAT_RESUME:
-                    self.cut_off = False
+                was_cut_off, was_streak = set(self.cut_off), self.cold_streak
+                while self._cold_starts and now - self._cold_starts[0] > COLD_STREAK_S:
+                    self._cold_starts.popleft()
+                self.cold_streak = len(self._cold_starts) >= COLD_STREAK
+                for heat, (_, off, resume) in ((True, OVERHEAT_HOT), (False, OVERHEAT_COLD)):
+                    if self.counter >= off:
+                        self.cut_off.add(heat)
+                    elif self.counter <= resume:
+                        self.cut_off.discard(heat)
                 for i in range(len(self.peltiers)):
                     self._apply(i)
-                after, scale = self.counter, self.scale()
+                after, hot, cold = self.counter, self.scale(True), self.scale(False)
             last = now
-            # Log each whole point while the duty is cut, and the step back to full.
-            if self.cut_off != was_cut_off:
-                log(f"overheat {after:.0f}: Peltiers "
-                    + ("off" if self.cut_off else f"back on at {scale:.0%}"))
-            elif (math.floor(after) != math.floor(before)
-                    and max(before, after) > OVERHEAT_THRESHOLD and not self.cut_off):
-                log(f"overheat {math.floor(after)}: Peltiers at {scale:.0%}")
+            if self.cold_streak != was_streak:
+                log(f"cold streak: heating at {COLD_STREAK_HOT:.0%}" if self.cold_streak else
+                    "cold streak over: heating back to normal")
+            # Log each whole point while either direction is cut, and the step back to full.
+            lowest = min(OVERHEAT_HOT[0], OVERHEAT_COLD[0])
+            if (self.cut_off != was_cut_off or math.floor(after) != math.floor(before)
+                    and max(before, after) > lowest):
+                log(f"overheat {after:.1f}: heating "
+                    + ("off" if True in self.cut_off else f"{hot:.0%}")
+                    + ", cooling " + ("off" if False in self.cut_off else f"{cold:.0%}"))
 
     def stop(self):
         self._stop.set()
@@ -413,8 +439,9 @@ class Player:
     methods; the background thread just runs the controller."""
 
     def __init__(self, controller: StimulusController,
-                 stimuli: dict[str, list[tuple[str, Stimulus]]]):
+                 stimuli: dict[str, list[tuple[str, Stimulus]]], governor: OverheatGovernor):
         self.controller = controller
+        self.governor = governor    # told when a stimulus that cools starts
         self.stimuli = stimuli      # name -> its variants, (label, stimulus)
         self.name = None            # the stimulus playing, or the last one played
         self.variant = None         # the label of the variant playing, or last played
@@ -459,6 +486,8 @@ class Player:
                                 stimulus.lra_activations)
         if name in SEAMLESS:
             stimulus = looped(stimulus, LOOP_S)
+        if False in heats(stimulus):
+            self.governor.cold_started()
         self._start(name, label, stimulus, stimulus, time.perf_counter(), 0.0, lead)
         return True
 
@@ -534,7 +563,7 @@ def main():
 
     controller = make_controller()
     governor = OverheatGovernor(controller.peltiers)
-    player = Player(controller, {})
+    player = Player(controller, {}, governor)
     try:
         for name in dict.fromkeys([name for _, _, name in COUNTER_TRIGGERS]
                                   + [name for _, name, _ in STATE_TRIGGERS]):
@@ -579,8 +608,9 @@ def main():
                     "(the \"host\" in each Quest's combat-output.json)")
             else:
                 log("This Pi has no network address yet; connect it to the Quests' network")
-            log(f"Overheat counter: Peltiers fade from {OVERHEAT_THRESHOLD:g} to off at "
-                f"{OVERHEAT_OFF:g}, recovering {OVERHEAT_DECAY:g}/s")
+            log("Overheat counter: heating fades from {:g} to off at {:g} (back at {:g}), "
+                "cooling from {:g} to off at {:g} (back at {:g}), recovering {:g}/s".format(
+                    *OVERHEAT_HOT, *OVERHEAT_COLD, OVERHEAT_DECAY))
             while True:
                 for name, ended_at in tracker.ended(time.perf_counter()):
                     if player.action_ended(name, ended_at):

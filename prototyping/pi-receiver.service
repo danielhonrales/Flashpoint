@@ -1,22 +1,24 @@
-# Runs pi_receiver.py at boot. Install with:
-#     sudo cp pi-receiver.service /etc/systemd/system/
-#     sudo systemctl daemon-reload && sudo systemctl enable --now pi-receiver
-# Logs: journalctl -u pi-receiver -f
+# Runs pi_receiver.py at boot, and again if it stops. Install with:
+#   sudo cp pi-receiver.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now pi-receiver
+# Then: systemctl status pi-receiver, journalctl -u pi-receiver -f (its log),
+# sudo systemctl restart pi-receiver (after pulling changes).
+# On another Pi, change User and WorkingDirectory to match it.
 
 [Unit]
-Description=Flashpoint Pi receiver (plays stimuli on thermal game combat events)
+Description=Flashpoint Pi receiver (plays stimuli on the game's combat events)
+# It listens on any address, so it doesn't need the network up, but waiting a little lets it
+# log the Pi's address at startup.
 Wants=network-online.target
 After=network-online.target sound.target
-# Keep retrying: the bind fails until Wi-Fi has given the Pi its address.
-StartLimitIntervalSec=0
 
 [Service]
-Type=simple
-User=milabpi
-WorkingDirectory=/home/milabpi/Desktop/Flashpoint/prototyping
-ExecStart=/usr/bin/python3 -u /home/milabpi/Desktop/Flashpoint/prototyping/pi_receiver.py
+User=milabpi-2026
+WorkingDirectory=/home/milabpi-2026/Desktop/Flashpoint/prototyping
+ExecStart=/usr/bin/python3 pi_receiver.py
 Restart=always
-RestartSec=3
+RestartSec=2
 
 [Install]
 WantedBy=multi-user.target
