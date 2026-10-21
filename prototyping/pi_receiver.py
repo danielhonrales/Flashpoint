@@ -46,13 +46,15 @@ each block starts a new hit variant. A hit heats or cools to match the attack th
 the message's ATTACK_FIELD (a fire beam is hot, an ice bomb cold); if it doesn't name one, a new
 hit heats if the last one heated and cooled if it cooled, so the Peltiers keep going one way.
 
-Usage: python3 pi_receiver.py [--device quest-a] [--bind 192.168.1.249] [--port 7779]
+Usage: python3 pi_receiver.py --name Player1 [--device quest-a] [--bind 192.168.1.249] [--port 7779]
 
 It listens on every address the Pi has, so it keeps working when the Pi's address changes (a new
-network, a new DHCP lease); it logs the Pi's addresses at startup. Each Quest's
-combat-output.json must point at one of them, e.g.
-    {"udpEnabled":true,"host":"192.168.1.249","port":7779,"deviceLabel":"quest-a"}
-Both Quests send here by default, so pass --device to react only to the wearer's own headset.
+network, a new DHCP lease); it logs the Pi's addresses at startup. The Quests find it by name:
+every BEACON_S it broadcasts "THERMAL-PI-1:<name>" to UDP DISCOVERY_PORT, and the game's Select Pi
+menu shows a button for each Pi it hears, so no Pi address is set in the game. Name the two Pis
+Player1 and Player2 (--name; it defaults to the Pi's hostname). The router has to pass broadcasts
+between its clients. Several Quests can pick the same Pi, so pass --device to react only to the
+wearer's own headset.
 
 Needs stimulus_editor.py (which sets up the devices, as configured at its top) and the stimuli in
 patterns/. Any device that can't be opened is simulated, as in the editor, and
@@ -84,6 +86,13 @@ from stimulus_editor import (PELTIER_MAX_DUTY, ErmActivation, LraActivation, Pel
 
 BIND = "0.0.0.0"        # listen on every address the Pi has (--bind picks one instead)
 PORT = 7779
+
+# Announcing this Pi to the Quests (PiSelectionMenu.cs in the game): BEACON_PREFIX + its name, as
+# UTF-8, broadcast to DISCOVERY_PORT every BEACON_S. The game greys a Pi out after 3 s unheard.
+DISCOVERY_PORT = 7780
+BEACON_PREFIX = "THERMAL-PI-1:"
+BEACON_S = 1.0
+MAX_NAME = 24           # the game ignores longer names
 
 # Counters in every game message, with the event the game sends when each goes up. The stimulus
 # plays when the counter goes up, and always plays to the end.
@@ -172,6 +181,62 @@ def own_addresses():
     except (OSError, subprocess.SubprocessError):
         return []
     return [address for address in out.split() if "." in address]
+
+
+def broadcast_addresses():
+    """Where to send the beacon: the limited broadcast, and each network's own broadcast address,
+    which still works when the Pi has no default route (a router with no internet)."""
+    targets = ["255.255.255.255"]
+    try:
+        out = subprocess.run(["ip", "-o", "-4", "addr", "show", "scope", "global"],
+                             capture_output=True, text=True, timeout=2).stdout
+    except (OSError, subprocess.SubprocessError):
+        return targets
+    for line in out.splitlines():
+        words = line.split()
+        if "brd" in words and words.index("brd") + 1 < len(words):
+            targets.append(words[words.index("brd") + 1])
+    return list(dict.fromkeys(targets))
+
+
+def valid_name(name):
+    """A name the game will show: 1 to MAX_NAME characters, none of them control characters."""
+    return 0 < len(name) <= MAX_NAME and name.isprintable()
+
+
+class Beacon:
+    """Broadcasts this Pi's name every BEACON_S on a background thread, so the Quests can list
+    it. It keeps trying while the Pi has no network, and logs when sending starts and stops
+    working."""
+
+    def __init__(self, name):
+        self.payload = (BEACON_PREFIX + name).encode()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self):
+        working = None
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            while True:
+                sent = False
+                for target in broadcast_addresses():
+                    try:
+                        sock.sendto(self.payload, (target, DISCOVERY_PORT))
+                        sent = True
+                    except OSError:
+                        pass    # no network yet, or no route for this address
+                if sent != working:
+                    log(f"announcing \"{self.payload.decode()}\" on UDP {DISCOVERY_PORT}" if sent else
+                        "can't announce this Pi: no network; still trying")
+                    working = sent
+                if self._stop.wait(BEACON_S):
+                    return
+
+    def stop(self):
+        self._stop.set()
+        self._thread.join()
 
 
 def log(text):
@@ -558,12 +623,19 @@ def main():
                         help=f"address to listen on (default {BIND}: any)")
     parser.add_argument("--port", type=int, default=PORT)
     parser.add_argument("--device", help="only react to this headset's deviceLabel, e.g. quest-a")
+    parser.add_argument("--name", default=socket.gethostname()[:MAX_NAME],
+                        help="name the Quests' Select Pi menu shows, Player1 or Player2 "
+                             "(default: this Pi's hostname)")
     args = parser.parse_args()
+    args.name = args.name.strip()
+    if not valid_name(args.name):
+        parser.error(f"--name must be 1 to {MAX_NAME} printable characters")
     signal.signal(signal.SIGTERM, lambda *args: sys.exit(0))    # systemctl stop: clean up too
 
     controller = make_controller()
     governor = OverheatGovernor(controller.peltiers)
     player = Player(controller, {}, governor)
+    beacon = None
     try:
         for name in dict.fromkeys([name for _, _, name in COUNTER_TRIGGERS]
                                   + [name for _, name, _ in STATE_TRIGGERS]):
@@ -604,10 +676,10 @@ def main():
                 + (f" for {args.device}" if args.device else " for any headset"))
             addresses = own_addresses()
             if addresses:
-                log(f"This Pi's address: {', '.join(addresses)} "
-                    "(the \"host\" in each Quest's combat-output.json)")
+                log(f"This Pi's address: {', '.join(addresses)}")
             else:
                 log("This Pi has no network address yet; connect it to the Quests' network")
+            beacon = Beacon(args.name)  # the Quests list this Pi as args.name
             log("Overheat counter: heating fades from {:g} to off at {:g} (back at {:g}), "
                 "cooling from {:g} to off at {:g} (back at {:g}), recovering {:g}/s".format(
                     *OVERHEAT_HOT, *OVERHEAT_COLD, OVERHEAT_DECAY))
@@ -659,6 +731,8 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        if beacon:
+            beacon.stop()
         player.stop()
         governor.stop()
         controller.close()

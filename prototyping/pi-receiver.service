@@ -1,10 +1,8 @@
-# Runs pi_receiver.py at boot, and again if it stops. Install with:
-#   sudo cp pi-receiver.service /etc/systemd/system/
-#   sudo systemctl daemon-reload
-#   sudo systemctl enable --now pi-receiver
-# Then: systemctl status pi-receiver, journalctl -u pi-receiver -f (its log),
-# sudo systemctl restart pi-receiver (after pulling changes).
-# On another Pi, change User and WorkingDirectory to match it.
+# Runs pi_receiver.py at boot, and again if it stops. Install it, or reinstall after pulling
+# changes, with install-receiver.sh, which fills in this Pi's User, WorkingDirectory and --name
+# (the name the Quests' Select Pi menu shows):
+#   bash install-receiver.sh Player1        (Player2 on the other Pi)
+# Then: systemctl status pi-receiver, journalctl -u pi-receiver -f (its log).
 
 [Unit]
 Description=Flashpoint Pi receiver (plays stimuli on the game's combat events)
@@ -16,7 +14,7 @@ After=network-online.target sound.target
 [Service]
 User=milabpi-2026
 WorkingDirectory=/home/milabpi-2026/Desktop/Flashpoint/prototyping
-ExecStart=/usr/bin/python3 pi_receiver.py
+ExecStart=/usr/bin/python3 pi_receiver.py --name Player1
 Restart=always
 RestartSec=2
 
