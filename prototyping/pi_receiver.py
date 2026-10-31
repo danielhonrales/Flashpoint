@@ -21,17 +21,15 @@ lowered early. If they're still active when it finishes, it plays again (another
 has several), for as long as they last, with only REPEAT_LEAD between plays. The shield loops
 seamlessly instead: its pattern is played back to back as one stimulus (up to LOOP_S). States
 count as active only while the game keeps sending (its snapshots come every 250 ms), so a dropped
-connection doesn't leave a stimulus looping. The first BOOSTED_PLAYS plays of an action (and
-every hit, a single play) run the Peltiers at BOOST_DUTY, to reach the temperature quickly.
+connection doesn't leave a stimulus looping.
 
-An overheat counter guards the skin: it goes up 1 per second while any Peltier is on (heating or
-cooling) and down OVERHEAT_DECAY per second while they're all off. Past a threshold a Peltier's
-duty is scaled down, the more the higher the counter, to nothing, so long or back-to-back thermal
-stimuli fade instead of getting painful; once there, it stays off until the counter is back down
-a little. Heating fades sooner and harder than cooling (OVERHEAT_HOT, OVERHEAT_COLD), as heat
-turns painful and cold is better for getting colder. Cold builds up heat in the Peltiers too,
-which makes a hot stimulus after it hotter, so while COLD_STREAK or more cooling stimuli have
-started in the last COLD_STREAK_S seconds, heating runs at COLD_STREAK_HOT of its duty.
+The Peltiers are run by their thermistors (ADS1115 A0 and A1, on each Peltier's skin face), not by
+the patterns' duty: a Peltier period heats or cools at full power (PELTIER_MAX_DUTY), and a PID
+loop per Peltier, on its own thermistor, scales heating back as the skin face nears HOT_SETPOINT,
+so it holds there rather than climbing. HOT_LIMIT is a hard limit on top: a Peltier reading it
+stops heating at once, and doesn't heat again until it has cooled to HOT_RESUME. Cooling likewise
+stops at COLD_LIMIT, until back up to COLD_RESUME. A Peltier whose thermistor can't be read (an
+open or shorted NTC, or no ADS1115) doesn't run at all.
 Once the grenade is thrown (the "iceThrows" counter goes up), ice_bomb plays to the
 end. States count as ended once they have stayed ended for END_GRACE seconds, which bridges the
 game switching from fire_charge to fire. A hit interrupts the shield stimulus rather than stopping
@@ -74,7 +72,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections import defaultdict, deque
+from collections import defaultdict
 from dataclasses import dataclass, field, replace
 
 from stimulus_editor import (PELTIER_MAX_DUTY, ErmActivation, LraActivation, PeltierActivation,
@@ -138,24 +136,33 @@ FRESH_S = 1.0           # seconds a session's states count as current without a 
 REPEAT_LEAD = 0.05      # seconds between one play of a repeating stimulus and the next
 SEAMLESS = {"shield"}   # stimuli looped back to back, with no gap at all, while their action lasts
 LOOP_S = 60.0           # how long one seamless loop runs (it then repeats like any other)
-BOOSTED_PLAYS = 2       # an action's first plays run the Peltiers at BOOST_DUTY...
-BOOST_DUTY = 1.0        # ...instead of the pattern's own duty (both at 1.0 draw ~3.2 A)
 SESSION_TIMEOUT = 60.0  # seconds without a message before a session is forgotten
 
-# Overheat counter (there's no thermistor cut-off yet): +1 per second while any Peltier is on,
-# heating or cooling, -OVERHEAT_DECAY per second while none is. Each direction has its own
-# (threshold, off, resume): above the threshold a Peltier's duty is scaled down in a straight line,
-# to nothing at off; once the counter reaches off it stays off until it falls back to resume.
-OVERHEAT_HOT = (4.0, 8.0, 6.0)      # heating: at 6, 50%
-OVERHEAT_COLD = (6.0, 14.0, 11.0)   # cooling: at 8, 75%; at 10, 50%
-OVERHEAT_DECAY = 1.0
-OVERHEAT_TICK = 0.1     # seconds between counter updates
-# Cooling builds up heat that makes later heating hotter: while COLD_STREAK or more stimuli that
-# cool (cold hits, ice bomb plays and their repeats) have started within COLD_STREAK_S seconds,
-# heating runs at COLD_STREAK_HOT times the duty the overheat counter gives it.
-COLD_STREAK = 3
-COLD_STREAK_S = 20.0
-COLD_STREAK_HOT = 0.3
+# Thermistors (HARDWARE.md §4): an ADS1115 reading each Peltier's NTC divider,
+# 3.3 V -> NTC_FIXED_OHMS -> junction (the ADS1115 input) -> NTC -> GND.
+ADS_ADDRESS = 0x48
+THERMISTOR_INPUTS = [0, 1]      # ADS1115 input per Peltier: A0 Peltier 1, A1 Peltier 2
+NTC_SUPPLY_V = 3.3
+NTC_FIXED_OHMS = 10_000
+NTC_R25 = 10_000                # the NTC's resistance at 25 °C...
+NTC_BETA = 3950                 # ...and its beta
+# Temperature limits on each Peltier's skin face, °C. Heating is held at HOT_SETPOINT by the PID
+# and cut at HOT_LIMIT until back down to HOT_RESUME; cooling is cut at COLD_LIMIT until back up
+# to COLD_RESUME (HARDWARE.md §6's TEMP_MIN_C, the cold-pain threshold).
+HOT_LIMIT = 40.0
+HOT_SETPOINT = 39.5
+HOT_RESUME = 39.0
+COLD_LIMIT = 15.0
+COLD_RESUME = 16.0
+# Heating PID: duty fraction = KP * error + KI * integral - KD * rate of rise, error being
+# HOT_SETPOINT minus the temperature, clamped to 0-1. Full power until about 1/KP °C below the
+# setpoint (sooner while it's rising fast), so the skin face's lag doesn't carry it past.
+PID_KP = 0.5            # per °C
+PID_KI = 0.05           # per °C·s; integrates only while the output isn't pinned at 0 or 1
+PID_KD = 0.4            # per °C/s
+PID_RATE_SMOOTHING = 0.3    # 0-1: how much of each new rate-of-rise sample is taken in
+THERMAL_TICK = 0.05     # seconds between control updates (each reads both thermistors)
+THERMAL_LOG_S = 1.0     # how often the temperatures are logged while a Peltier is on
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PATTERNS = os.path.join(HERE, "patterns")
@@ -342,10 +349,6 @@ class SessionTracker:
 # Playback
 # ----------------------------------------------------------------------------
 
-def has_peltiers(stimuli):
-    return any(s.peltier_activations for s in stimuli)
-
-
 def attack_heats(msg: dict) -> bool | None:
     """True if the message reports a hot attack, False for a cold one, None if it doesn't say."""
     attack = str(msg.get(ATTACK_FIELD, "")).lower()
@@ -401,20 +404,79 @@ def remaining(stimulus: Stimulus, offset: float) -> Stimulus:
                      for p in left(stimulus.lra_activations)])
 
 
-class OverheatGovernor:
-    """Keeps the overheat counter and scales the Peltiers' duty by it. It takes over each
-    Peltier's on() and off(): a stimulus's on() is remembered as the duty asked for, and the
-    Peltier is driven at that duty times scale(), adjusted every OVERHEAT_TICK as the counter
-    changes. Peltiers scaled to nothing are switched off (and so stop adding to the counter)."""
+class Thermistors:
+    """The Peltiers' NTCs, read through the ADS1115. read() gives each one's °C, or None if it
+    can't be read or reads open or shorted."""
 
-    def __init__(self, peltiers):
+    def __init__(self):
+        self.sim_reason = None
+        self._bus = None
+        try:
+            from smbus2 import SMBus
+            self._bus = SMBus(1)
+            self._bus.read_byte_data(ADS_ADDRESS, 0x01)     # is it there?
+        except Exception as e:
+            self.sim_reason = f"ADS1115: {type(e).__name__}: {e}"
+            if self._bus is not None:
+                self._bus.close()
+            self._bus = None
+
+    def _volts(self, channel):
+        # Single shot, A<channel> against GND, +-4.096 V range, 860 samples/s.
+        config = 0x8000 | ((4 + channel) << 12) | (1 << 9) | (1 << 8) | (7 << 5) | 0x3
+        self._bus.write_i2c_block_data(ADS_ADDRESS, 0x01, [config >> 8, config & 0xFF])
+        deadline = time.perf_counter() + 0.02
+        while not self._bus.read_i2c_block_data(ADS_ADDRESS, 0x01, 2)[0] & 0x80:
+            if time.perf_counter() > deadline:
+                raise TimeoutError("ADS1115 conversion")
+            time.sleep(0.0005)
+        high, low = self._bus.read_i2c_block_data(ADS_ADDRESS, 0x00, 2)
+        raw = (high << 8) | low
+        return (raw - 0x10000 if raw & 0x8000 else raw) * 4.096 / 0x8000
+
+    def read(self):
+        temps = []
+        for channel in THERMISTOR_INPUTS:
+            try:
+                v = self._volts(channel)
+            except Exception:
+                temps.append(None)
+                continue
+            if not 0.05 < v < NTC_SUPPLY_V - 0.05:     # open or shorted
+                temps.append(None)
+                continue
+            ohms = NTC_FIXED_OHMS * v / (NTC_SUPPLY_V - v)
+            temps.append(1 / (1 / 298.15 + math.log(ohms / NTC_R25) / NTC_BETA) - 273.15)
+        return temps
+
+    def close(self):
+        if self._bus is not None:
+            self._bus.close()
+
+
+@dataclass
+class _Loop:
+    """One Peltier's control state."""
+    temp: float | None = None
+    integral: float = 0.0
+    rate: float = 0.0           # smoothed °C/s
+    hot_cut: bool = False       # past HOT_LIMIT, not yet back to HOT_RESUME
+    cold_cut: bool = False      # past COLD_LIMIT, not yet back to COLD_RESUME
+    fault: bool = False         # its thermistor can't be read
+    scale: float = 1.0          # the heating PID's output
+
+
+class ThermalGovernor:
+    """Runs the Peltiers from their thermistors. It takes over each Peltier's on() and off(): a
+    stimulus's on() just says which way it wants that Peltier to go, and every THERMAL_TICK the
+    Peltier is driven that way at PELTIER_MAX_DUTY, scaled by the heating PID while heating, or
+    off while a limit is cut or its thermistor can't be read."""
+
+    def __init__(self, peltiers, thermistors: Thermistors):
         self.peltiers = peltiers
-        self.counter = 0.0
-        self.cut_off = set()    # directions (True heating) that reached their off point, and
-                                # aren't yet back down to their resume point
-        self._cold_starts = deque()     # perf_counter() of each recent cooling stimulus's start
-        self.cold_streak = False        # COLD_STREAK of them within COLD_STREAK_S
-        self._wanted = {}   # Peltier index -> (duty, heat) the stimulus asks for
+        self.thermistors = thermistors
+        self.loops = [_Loop() for _ in peltiers]
+        self._wanted = {}   # Peltier index -> True heating / False cooling, as asked for
         self._on = [p.on for p in peltiers]
         self._off = [p.off for p in peltiers]
         for i, p in enumerate(peltiers):
@@ -422,27 +484,17 @@ class OverheatGovernor:
             p.off = functools.partial(self._request_off, i)
         self._lock = threading.Lock()
         self._stop = threading.Event()
+        self._update(THERMAL_TICK, log_changes=False)   # temperatures before the first play
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
-
-    def scale(self, heat):
-        """The fraction of the asked-for duty a Peltier heating (True) or cooling (False) gets
-        at the present count."""
-        if heat in self.cut_off:
-            return 0.0
-        threshold, off, _ = OVERHEAT_HOT if heat else OVERHEAT_COLD
-        scale = min(1.0, max(0.0, (off - self.counter) / (off - threshold)))
-        return scale * COLD_STREAK_HOT if heat and self.cold_streak else scale
-
-    def cold_started(self):
-        """A stimulus that cools has started."""
-        with self._lock:
-            self._cold_starts.append(time.perf_counter())
 
     def _request_on(self, i, duty, heat):
         self.peltiers[i].check(duty, heat)
         with self._lock:
-            self._wanted[i] = (duty, heat)
+            if self._wanted.get(i) != heat:
+                loop = self.loops[i]
+                loop.integral, loop.rate, loop.scale = 0.0, 0.0, 1.0    # a fresh run
+            self._wanted[i] = heat
             self._apply(i)
 
     def _request_off(self, i):
@@ -450,53 +502,100 @@ class OverheatGovernor:
             self._wanted.pop(i, None)
             self._off[i]()
 
+    def _duty(self, i):
+        """The duty Peltier i is to run at now (the lock is held)."""
+        heat, loop = self._wanted.get(i), self.loops[i]
+        if heat is None or loop.fault:
+            return 0.0
+        if heat:
+            return 0.0 if loop.hot_cut else PELTIER_MAX_DUTY * loop.scale
+        return 0.0 if loop.cold_cut else PELTIER_MAX_DUTY
+
     def _apply(self, i):
-        """Drive Peltier i at its asked-for duty, scaled (the lock is held)."""
-        peltier, wanted = self.peltiers[i], self._wanted.get(i)
-        duty = wanted[0] * self.scale(wanted[1]) if wanted else 0.0
+        """Drive Peltier i at _duty() (the lock is held)."""
+        peltier, duty = self.peltiers[i], self._duty(i)
         if duty < 0.01:
             if peltier.is_on:
                 self._off[i]()
-        elif abs(duty - peltier.duty) > 0.005 or peltier.heat != wanted[1]:
-            self._on[i](duty, wanted[1])
+        elif abs(duty - peltier.duty) > 0.005 or peltier.heat != self._wanted[i]:
+            self._on[i](duty, self._wanted[i])
+
+    def _update(self, dt, log_changes=True):
+        """Read the thermistors and update each loop (the lock is not held)."""
+        if self.thermistors.sim_reason:
+            temps = [None] * len(self.peltiers)
+        else:
+            temps = self.thermistors.read()
+        events = []
+        with self._lock:
+            for i, (loop, temp) in enumerate(zip(self.loops, temps)):
+                name = self.peltiers[i].name
+                if temp is None:
+                    if not loop.fault:
+                        events.append(f"{name}: thermistor can't be read, Peltier off")
+                    loop.fault, loop.temp = True, None
+                    self._apply(i)
+                    continue
+                if loop.fault:
+                    events.append(f"{name}: thermistor back ({temp:.1f} °C)")
+                    loop.fault = False
+                previous, loop.temp = loop.temp, temp
+                if previous is not None:
+                    loop.rate += PID_RATE_SMOOTHING * ((temp - previous) / dt - loop.rate)
+                if temp >= HOT_LIMIT and not loop.hot_cut:
+                    loop.hot_cut = True
+                    events.append(f"{name}: {temp:.1f} °C, at the {HOT_LIMIT:g} °C limit, "
+                                  "heating off")
+                elif temp <= HOT_RESUME and loop.hot_cut:
+                    loop.hot_cut = False
+                    events.append(f"{name}: {temp:.1f} °C, heating allowed again")
+                if temp <= COLD_LIMIT and not loop.cold_cut:
+                    loop.cold_cut = True
+                    events.append(f"{name}: {temp:.1f} °C, at the {COLD_LIMIT:g} °C limit, "
+                                  "cooling off")
+                elif temp >= COLD_RESUME and loop.cold_cut:
+                    loop.cold_cut = False
+                    events.append(f"{name}: {temp:.1f} °C, cooling allowed again")
+                if self._wanted.get(i) is True and not loop.hot_cut:
+                    error = HOT_SETPOINT - temp
+                    output = PID_KP * error + loop.integral - PID_KD * max(0.0, loop.rate)
+                    if 0.0 < output < 1.0:      # anti-windup: integrate only when not pinned
+                        loop.integral += PID_KI * error * dt
+                        output = PID_KP * error + loop.integral - PID_KD * max(0.0, loop.rate)
+                    loop.scale = min(1.0, max(0.0, output))
+                self._apply(i)
+        if log_changes:
+            for event in events:
+                log(event)
+        return temps
+
+    def status(self):
+        """Each Peltier's temperature and what it's doing, for the log."""
+        parts = []
+        with self._lock:
+            for i, (peltier, loop) in enumerate(zip(self.peltiers, self.loops)):
+                temp = "?" if loop.temp is None else f"{loop.temp:.1f} °C"
+                heat = self._wanted.get(i)
+                doing = ("idle" if heat is None else
+                         f"{'heat' if heat else 'cool'} {self._duty(i) / PELTIER_MAX_DUTY:.0%}")
+                parts.append(f"{peltier.name} {temp} {doing}")
+        return ", ".join(parts)
 
     def _run(self):
         last = time.perf_counter()
-        while not self._stop.wait(OVERHEAT_TICK):
+        last_log = 0.0
+        while not self._stop.wait(THERMAL_TICK):
             now = time.perf_counter()
-            with self._lock:
-                before = self.counter
-                if any(p.is_on for p in self.peltiers):
-                    self.counter += now - last
-                else:
-                    self.counter = max(0.0, self.counter - OVERHEAT_DECAY * (now - last))
-                was_cut_off, was_streak = set(self.cut_off), self.cold_streak
-                while self._cold_starts and now - self._cold_starts[0] > COLD_STREAK_S:
-                    self._cold_starts.popleft()
-                self.cold_streak = len(self._cold_starts) >= COLD_STREAK
-                for heat, (_, off, resume) in ((True, OVERHEAT_HOT), (False, OVERHEAT_COLD)):
-                    if self.counter >= off:
-                        self.cut_off.add(heat)
-                    elif self.counter <= resume:
-                        self.cut_off.discard(heat)
-                for i in range(len(self.peltiers)):
-                    self._apply(i)
-                after, hot, cold = self.counter, self.scale(True), self.scale(False)
+            self._update(now - last)
             last = now
-            if self.cold_streak != was_streak:
-                log(f"cold streak: heating at {COLD_STREAK_HOT:.0%}" if self.cold_streak else
-                    "cold streak over: heating back to normal")
-            # Log each whole point while either direction is cut, and the step back to full.
-            lowest = min(OVERHEAT_HOT[0], OVERHEAT_COLD[0])
-            if (self.cut_off != was_cut_off or math.floor(after) != math.floor(before)
-                    and max(before, after) > lowest):
-                log(f"overheat {after:.1f}: heating "
-                    + ("off" if True in self.cut_off else f"{hot:.0%}")
-                    + ", cooling " + ("off" if False in self.cut_off else f"{cold:.0%}"))
+            if self._wanted and now - last_log >= THERMAL_LOG_S:
+                log(self.status())
+                last_log = now
 
     def stop(self):
         self._stop.set()
         self._thread.join()
+        self.thermistors.close()
 
 
 class Player:
@@ -504,9 +603,8 @@ class Player:
     methods; the background thread just runs the controller."""
 
     def __init__(self, controller: StimulusController,
-                 stimuli: dict[str, list[tuple[str, Stimulus]]], governor: OverheatGovernor):
+                 stimuli: dict[str, list[tuple[str, Stimulus]]]):
         self.controller = controller
-        self.governor = governor    # told when a stimulus that cools starts
         self.stimuli = stimuli      # name -> its variants, (label, stimulus)
         self.name = None            # the stimulus playing, or the last one played
         self.variant = None         # the label of the variant playing, or last played
@@ -521,10 +619,11 @@ class Player:
     def playing(self):
         return self._thread is not None and self._thread.is_alive()
 
-    def play(self, name, lead=0.2, boost=False, heat=None):
+    def play(self, name, lead=0.2, heat=None):
         """Start the named stimulus (a random variant of it), stopping the one playing, or
         pausing it if the new one interrupts it. False if the named stimulus was already playing.
-        boost=True runs its Peltier periods at BOOST_DUTY; `lead` is the pause before it starts. heat=True or False picks a variant that heats or cools."""
+        `lead` is the pause before it starts. heat=True or False picks a variant that heats or
+        cools."""
         retrigger = self.playing() and self.name == name
         if retrigger and name not in RETRIGGER:
             return False
@@ -544,15 +643,8 @@ class Player:
         if len(variants) > 1 and self.name == name:     # not the same variant twice running
             variants = [v for v in variants if v[0] != self.variant]
         label, stimulus = random.choice(variants)
-        if boost:
-            peltiers = [replace(p, duty=min(BOOST_DUTY, PELTIER_MAX_DUTY))
-                        for p in stimulus.peltier_activations]
-            stimulus = Stimulus(stimulus.erm_activations, peltiers, stimulus.peltier_warmup,
-                                stimulus.lra_activations)
         if name in SEAMLESS:
             stimulus = looped(stimulus, LOOP_S)
-        if False in heats(stimulus):
-            self.governor.cold_started()
         self._start(name, label, stimulus, stimulus, time.perf_counter(), 0.0, lead)
         return True
 
@@ -633,8 +725,8 @@ def main():
     signal.signal(signal.SIGTERM, lambda *args: sys.exit(0))    # systemctl stop: clean up too
 
     controller = make_controller()
-    governor = OverheatGovernor(controller.peltiers)
-    player = Player(controller, {}, governor)
+    governor = ThermalGovernor(controller.peltiers, Thermistors())
+    player = Player(controller, {})
     beacon = None
     try:
         for name in dict.fromkeys([name for _, _, name in COUNTER_TRIGGERS]
@@ -660,7 +752,6 @@ def main():
 
         tracker = SessionTracker()
         repeat = None           # the state-triggered stimulus to repeat while its states last
-        repeat_plays = 0        # how many times it has played in this run
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             try:
                 sock.bind((args.bind, args.port))
@@ -680,9 +771,11 @@ def main():
             else:
                 log("This Pi has no network address yet; connect it to the Quests' network")
             beacon = Beacon(args.name)  # the Quests list this Pi as args.name
-            log("Overheat counter: heating fades from {:g} to off at {:g} (back at {:g}), "
-                "cooling from {:g} to off at {:g} (back at {:g}), recovering {:g}/s".format(
-                    *OVERHEAT_HOT, *OVERHEAT_COLD, OVERHEAT_DECAY))
+            if governor.thermistors.sim_reason:
+                log(f"NO THERMISTORS, Peltiers off: {governor.thermistors.sim_reason}")
+            log(f"Thermal control: heating held at {HOT_SETPOINT:g} °C, cut at {HOT_LIMIT:g} °C "
+                f"(back at {HOT_RESUME:g}), cooling cut at {COLD_LIMIT:g} °C "
+                f"(back at {COLD_RESUME:g}); now {governor.status()}")
             while True:
                 for name, ended_at in tracker.ended(time.perf_counter()):
                     if player.action_ended(name, ended_at):
@@ -693,13 +786,9 @@ def main():
                 now = time.perf_counter()
                 if repeat and not player.playing():
                     if tracker.still_active(repeat, now):
-                        variants = [s for _, s in player.stimuli[repeat]]
-                        repeat_plays += 1
-                        boost = repeat_plays <= BOOSTED_PLAYS and has_peltiers(variants)
-                        player.play(repeat, REPEAT_LEAD, boost)
+                        player.play(repeat, REPEAT_LEAD)
                         which = (f" [{player.variant}]" if len(player.stimuli[repeat]) > 1 else "")
-                        log(f"repeat {repeat}{which}, its action is still active"
-                            + (f" (Peltiers at {BOOST_DUTY:.0%})" if boost else ""))
+                        log(f"repeat {repeat}{which}, its action is still active")
                     else:
                         repeat = None
                 try:
@@ -714,20 +803,17 @@ def main():
                     player.play_out(name)
                 if started:
                     if any(name == started for _, name, _ in STATE_TRIGGERS):
-                        repeat, repeat_plays = started, 1
+                        repeat = started
                     chained = started in RETRIGGER and player.playing() and player.name == started
-                    # An action's first play (and any hit) gets the Peltier boost.
-                    boost = has_peltiers([s for _, s in player.stimuli[started]])
                     heat = attack_heats(msg) if started in TEMPERATURE_MATCHED else None
-                    played = player.play(started, boost=boost, heat=heat)
+                    played = player.play(started, heat=heat)
                     which = (f" [{player.variant}]"
                              if played and len(player.stimuli[started]) > 1 else "")
                     attack = (f" ({ATTACK_FIELD}={msg[ATTACK_FIELD]!r})"
                               if started in TEMPERATURE_MATCHED and ATTACK_FIELD in msg else "")
                     log(f"{msg.get('device')} {msg['event']}{attack} -> {started}{which}"
                         + ("" if played else " (already playing)")
-                        + (" (again)" if played and chained else "")
-                        + (f" (Peltiers at {BOOST_DUTY:.0%})" if played and boost else ""))
+                        + (" (again)" if played and chained else ""))
     except KeyboardInterrupt:
         pass
     finally:
